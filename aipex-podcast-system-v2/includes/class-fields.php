@@ -59,11 +59,25 @@ class Aipex_Podcast_Fields {
 
     public static function update($key, $value, $post_id){
         $primary = $key;
+        $updated = false;
         if (function_exists('update_field')) {
             $updated = update_field($primary, $value, $post_id);
-            if ($updated) return $updated;
         }
-        return update_post_meta($post_id, $primary, $value);
+        if (!$updated) $updated = update_post_meta($post_id, $primary, $value);
+
+        // Relationship-bearing fields keep the join table in sync regardless
+        // of write path — admin edit screen (via acf/save_post, see
+        // class-core.php), the v1→v2 migration tool, or programmatic
+        // updates like the sponsor admin tools in class-admin.php. This is
+        // intentionally a full re-sync of the post rather than a single
+        // edge, since it's cheap (a handful of small DELETE/INSERTs) and
+        // guarantees correctness without every call site needing to know
+        // about the relationship layer.
+        if (class_exists('Aipex_Podcast_Relationships') && in_array($key, ['series','presenters','guests','sponsors','series_sponsors'], true)) {
+            Aipex_Podcast_Relationships::sync_post($post_id);
+        }
+
+        return $updated;
     }
 
     public static function has_value($value){
@@ -174,14 +188,28 @@ class Aipex_Podcast_Fields {
      * Single canonical episode query used by every shortcode/widget/AJAX
      * handler. This is the ONLY place relationship matching for episodes
      * should live — do not re-implement this elsewhere.
+     *
+     * Filtering now goes through Aipex_Podcast_Relationships (a real join
+     * table) instead of meta_query LIKE scans against serialized ACF data —
+     * faster at scale and immune to the alias/serialization-format drift
+     * that caused the presenter relationship bugs in earlier builds.
      */
     public static function query_episodes($args=[]){
-        $meta = [];
-        if (!empty($args['series_id'])) $meta[] = self::relationship_meta_query('series', (int)$args['series_id']);
-        if (!empty($args['presenter_id'])) $meta[] = self::relationship_meta_query('presenters', (int)$args['presenter_id']);
+        $post_in = null; // null = no relationship filter applied
+        $filters = [
+            'series_id' => Aipex_Podcast_Relationships::TYPE_SHOW,
+            'presenter_id' => Aipex_Podcast_Relationships::TYPE_HOST,
+            'guest_id' => Aipex_Podcast_Relationships::TYPE_GUEST,
+            'sponsor_id' => Aipex_Podcast_Relationships::TYPE_SPONSOR,
+        ];
+        foreach ($filters as $arg_key => $entity_type) {
+            if (empty($args[$arg_key])) continue;
+            $ids = Aipex_Podcast_Relationships::episodes_for($entity_type, (int)$args[$arg_key]);
+            $post_in = $post_in === null ? $ids : array_values(array_intersect($post_in, $ids));
+            unset($args[$arg_key]);
+        }
         $base = ['post_type'=>'aipex_podcast','posts_per_page'=>12,'post_status'=>'publish','orderby'=>'date','order'=>'DESC'];
-        if ($meta) $base['meta_query'] = count($meta) > 1 ? array_merge(['relation'=>'AND'], $meta) : $meta;
-        unset($args['series_id'], $args['presenter_id']);
+        if ($post_in !== null) $base['post__in'] = $post_in ?: [0]; // [0] forces zero results rather than "no filter"
         return new WP_Query(array_merge($base, $args));
     }
 }

@@ -1,4 +1,42 @@
-# Aipex Podcast System — v3.0.1
+# Aipex Podcast System — v3.1.0
+
+## v3.1.0 — Phase 1 of the relationship architecture
+
+Implements `Aipex_Podcast_Relationships`, a real join table (`wp_aipex_relationships`)
+backing every entity-to-entity lookup in the plugin, replacing the
+meta_query/LIKE-against-serialized-ACF-data approach.
+
+- **New table**: `from_type, from_id, to_type, to_id` edges. Direct edges
+  (episode→show, episode→host, episode→guest, episode→sponsor, show→sponsor)
+  are written from existing ACF relationship fields. There's no direct
+  host↔show, host↔guest, host↔sponsor, guest↔show, or guest↔sponsor field in
+  the current data model — those are computed as *derived* two-hop lookups
+  through the episode at read time (e.g. a host's shows = the shows of the
+  episodes they appear on), not stored separately.
+- **`episodes_for() / shows_for() / hosts_for() / guests_for() / sponsors_for()`**
+  — the only place anything in the plugin should query relationship data
+  going forward.
+- **Kept in sync automatically** two ways, since not every write path goes
+  through the same code: `acf/save_post` (admin edit screen) and inside
+  `Aipex_Podcast_Fields::update()` (migration tool, sponsor admin actions,
+  any future programmatic writes). Both call the same idempotent
+  `sync_post()`.
+- **`Aipex_Podcast_Fields::query_episodes()`** now filters via the
+  relationship table (`post__in`) instead of `meta_query` `LIKE` scans, and
+  gained `guest_id`/`sponsor_id` filters alongside the existing
+  `series_id`/`presenter_id` — laying groundwork for Phase 2's generic
+  Relationship Grid widget.
+- One-time backfill (`migrate_all()`) runs automatically on activation and
+  on the standard version-gated `admin_init` upgrade check, so the live
+  site's existing ACF data populates the new table without manual steps.
+  A "Rebuild Relationship Index" button was also added to Tools & Scanners
+  for manual re-runs.
+
+**Not in this release** (Phase 2/3 per the agreed plan): the generic
+Relationship Grid shortcode/widget, the Entity API, and the Elementor widget
+consolidation. Existing shortcodes (`aipex_presenter_podcasts` etc.) are
+unchanged on the outside — they now read from the new table internally, but
+nothing placed on existing pages needs to change.
 
 ## v3.0.1
 

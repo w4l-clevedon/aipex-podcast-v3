@@ -5,6 +5,7 @@ class Aipex_Podcast_Core {
         add_action('init', ['Aipex_Podcast_Post_Types','register'], 5);
         add_action('init', ['Aipex_Podcast_Shortcodes','register'], 20);
         add_action('acf/init', ['Aipex_Podcast_ACF','register_fields']);
+        add_action('acf/save_post', ['Aipex_Podcast_Relationships','sync_post'], 20);
         add_action('admin_menu', ['Aipex_Podcast_Admin','menus'], 30);
         add_action('admin_menu', ['Aipex_Podcast_Settings','menu'], 31);
         add_action('admin_init', ['Aipex_Podcast_Admin','handle_actions']);
@@ -18,6 +19,7 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);
+        add_action('admin_init', ['Aipex_Podcast_Core','maybe_migrate_relationships']);
         add_action('init', ['Aipex_Podcast_Core','register_legacy_redirect'], 7);
         Aipex_Podcast_Elementor::init();
     }
@@ -55,6 +57,19 @@ class Aipex_Podcast_Core {
         if (get_option($key) !== AIPEX_PODCAST_VERSION) {
             Aipex_Podcast_Post_Types::register();
             flush_rewrite_rules(false);
+            update_option($key, AIPEX_PODCAST_VERSION, false);
+        }
+    }
+    /**
+     * Creates the relationships join table and backfills it from existing
+     * ACF data on first run after upgrading to a version that has it.
+     * Re-running migrate_all() is safe (sync_post() is idempotent), so this
+     * only needs to fire once per version bump rather than every request.
+     */
+    public static function maybe_migrate_relationships(){
+        $key = 'aipex_relationships_schema_version';
+        if (get_option($key) !== AIPEX_PODCAST_VERSION) {
+            Aipex_Podcast_Relationships::migrate_all();
             update_option($key, AIPEX_PODCAST_VERSION, false);
         }
     }

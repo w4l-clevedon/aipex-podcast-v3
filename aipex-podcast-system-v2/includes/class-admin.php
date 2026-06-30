@@ -22,6 +22,7 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
         if(isset($_POST['aipex_remove_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::remove_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id'))); self::notice($msg); }
+        if(isset($_POST['aipex_rebuild_relationships'])){ check_admin_referer('aipex_tools'); $n=Aipex_Podcast_Relationships::migrate_all(); self::notice('Relationship index rebuilt from '.$n.' episodes/shows.'); }
     }
     public static function notice($msg){ set_transient('aipex_admin_notice', $msg, 60); }
     public static function show_notice(){ if($m=get_transient('aipex_admin_notice')){ echo '<div class="notice notice-success"><p>'.esc_html($m).'</p></div>'; delete_transient('aipex_admin_notice'); } }
@@ -41,6 +42,7 @@ class Aipex_Podcast_Admin {
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Bad Audio URL Replacement</h2><p>Replaces old/broken Google Storage MP3 URLs with matched Dropbox links from the latest Dropbox scan. Run <strong>Dropbox Importer → Start Batch Scan</strong> first.</p><p><button class="button button-primary" name="aipex_replace_bad_audio" value="1">Replace Bad Audio URLs With Dropbox Links</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
+        echo '<h2>Relationship Index</h2><p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Runs automatically after a plugin update, but you can force it here if something looks out of sync.</p><p><button class="button" name="aipex_rebuild_relationships" value="1">Rebuild Relationship Index</button></p>';
         echo '<h2>Default Show Sponsor</h2><p>Set WRS or another sponsor as the default sponsor for all shows/series.</p>';
         echo '<p><label>Sponsor ID <input type="number" name="default_sponsor_id" value="'.esc_attr(Aipex_Podcast_Settings::get('default_sponsor_id')).'" min="0" style="width:120px"></label> <span class="description">Set the site default on the Settings page.</span></p>';
         echo '<p><label><input type="checkbox" name="replace_existing_sponsors" value="1"> Replace existing show sponsors instead of only filling blanks</label></p>';
