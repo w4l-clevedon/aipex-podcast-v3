@@ -28,29 +28,162 @@ class Aipex_Podcast_Admin {
 
     public static function dashboard(){
         self::show_notice();
-        $counts = [
-            'Podcasts' => self::published_count('aipex_podcast'),
-            'Shows' => self::published_count('aipex_series'),
-            'Hosts / Presenters' => self::published_count('aipex_presenter'),
-            'Guests' => self::published_count('aipex_guest'),
-            'Sponsors' => self::published_count('aipex_sponsor'),
+        $entity_counts = [
+            'Podcasts'          => self::published_count('aipex_podcast'),
+            'Shows'             => self::published_count('aipex_series'),
+            'Hosts / Presenters'=> self::published_count('aipex_presenter'),
+            'Guests'            => self::published_count('aipex_guest'),
+            'Sponsors'          => self::published_count('aipex_sponsor'),
         ];
+        $play_stats  = Aipex_Podcast_Analytics::get_summary_stats();
+        $countries   = Aipex_Podcast_Analytics::get_country_data(50);
+        $browsers    = Aipex_Podcast_Analytics::get_browser_data();
+        $devices     = Aipex_Podcast_Analytics::get_device_data();
+        $top_eps     = Aipex_Podcast_Analytics::get_top_episodes(10);
+        $monthly     = Aipex_Podcast_Analytics::get_plays_by_month(12);
+        $total_plays = max(1, $play_stats['total']);
+
+        $card_style = 'background:#fff;border:1px solid #ccd0d4;border-radius:6px;padding:18px 24px;min-width:140px;flex:1 1 140px';
+        $section_style = 'background:#fff;border:1px solid #ccd0d4;border-radius:6px;padding:20px 24px;margin-top:16px';
+
         echo '<div class="wrap"><h1>Aipex Podcast System</h1>';
-        echo '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px">';
-        foreach ($counts as $label => $count) {
-            echo '<div style="background:#fff;border:1px solid #ccd0d4;border-radius:6px;padding:18px 24px;min-width:150px">';
-            echo '<div style="font-size:28px;font-weight:700;line-height:1">'.esc_html($count).'</div>';
-            echo '<div style="color:#646970;margin-top:6px">'.esc_html($label).'</div>';
+
+        // ── Entity counts ──
+        echo '<h2 style="margin-top:20px">Content</h2>';
+        echo '<div style="display:flex;flex-wrap:wrap;gap:12px">';
+        foreach ($entity_counts as $label => $count) {
+            echo '<div style="'.$card_style.'">';
+            echo '<div style="font-size:30px;font-weight:700;line-height:1;color:var(--aipex-brand,#e4005a)">'.esc_html(number_format($count)).'</div>';
+            echo '<div style="color:#646970;margin-top:6px;font-size:13px">'.esc_html($label).'</div>';
             echo '</div>';
         }
         echo '</div>';
-        echo '<p style="margin-top:24px;color:#646970">Listen counts and live listener tracking are planned for a future release — see <strong>Tools &amp; Scanners</strong> for content tools, and <strong>Settings</strong> for site-wide configuration.</p>';
-        echo '</div>';
-    }
 
-    private static function published_count($post_type){
-        $counts = wp_count_posts($post_type);
-        return $counts && isset($counts->publish) ? (int)$counts->publish : 0;
+        // ── Play stats ──
+        echo '<h2 style="margin-top:24px">Listener Stats</h2>';
+        if ($play_stats['total'] === 0) {
+            echo '<p style="color:#646970">No play data recorded yet. Stats appear here once listeners start playing episodes on the site.</p>';
+        } else {
+            echo '<div style="display:flex;flex-wrap:wrap;gap:12px">';
+            $play_cards = [
+                'Total Plays'      => number_format($play_stats['total']),
+                'This Month'       => number_format($play_stats['this_month']),
+                'This Week'        => number_format($play_stats['this_week']),
+                'Countries Reached'=> number_format($play_stats['countries']),
+            ];
+            foreach ($play_cards as $label => $val) {
+                echo '<div style="'.$card_style.'">';
+                echo '<div style="font-size:30px;font-weight:700;line-height:1;color:var(--aipex-brand,#e4005a)">'.esc_html($val).'</div>';
+                echo '<div style="color:#646970;margin-top:6px;font-size:13px">'.esc_html($label).'</div>';
+                echo '</div>';
+            }
+            echo '</div>';
+
+            // ── World map ──
+            echo '<div style="'.$section_style.'">';
+            echo '<h3 style="margin-top:0">Listener Locations</h3>';
+            echo '<div id="aipex-geo-map" style="width:100%;height:420px"></div>';
+            echo '<p style="color:#646970;font-size:12px;margin-bottom:0">IP addresses are anonymised before storage. Country-level data only.</p>';
+            echo '</div>';
+
+            // ── Browser + Device charts ──
+            echo '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:16px">';
+
+            // Browser
+            echo '<div style="'.$section_style.';flex:1 1 280px">';
+            echo '<h3 style="margin-top:0">Browser</h3>';
+            echo '<canvas id="aipex-browser-chart" style="max-height:220px"></canvas>';
+            echo '<table style="width:100%;margin-top:12px;font-size:13px;border-collapse:collapse">';
+            $browser_total = max(1, array_sum(array_column($browsers,'plays')));
+            foreach ($browsers as $row) {
+                $pct = round(100*$row['plays']/$browser_total);
+                echo '<tr><td>'.esc_html($row['browser']).'</td><td style="text-align:right;color:#646970">'.esc_html(number_format($row['plays'])).' ('.esc_html($pct).'%)</td></tr>';
+            }
+            echo '</table></div>';
+
+            // Device
+            echo '<div style="'.$section_style.';flex:1 1 280px">';
+            echo '<h3 style="margin-top:0">Device</h3>';
+            echo '<canvas id="aipex-device-chart" style="max-height:220px"></canvas>';
+            echo '<table style="width:100%;margin-top:12px;font-size:13px;border-collapse:collapse">';
+            $device_total = max(1, array_sum(array_column($devices,'plays')));
+            foreach ($devices as $row) {
+                $pct = round(100*$row['plays']/$device_total);
+                echo '<tr><td>'.esc_html($row['device_type']).'</td><td style="text-align:right;color:#646970">'.esc_html(number_format($row['plays'])).' ('.esc_html($pct).'%)</td></tr>';
+            }
+            echo '</table></div>';
+
+            // Top countries
+            echo '<div style="'.$section_style.';flex:2 1 320px">';
+            echo '<h3 style="margin-top:0">Top Countries</h3>';
+            echo '<table style="width:100%;font-size:13px;border-collapse:collapse">';
+            echo '<thead><tr><th style="text-align:left;padding-bottom:8px">Country</th><th style="text-align:right;padding-bottom:8px">Plays</th><th style="text-align:right;padding-bottom:8px">%</th></tr></thead><tbody>';
+            $top20 = array_slice($countries, 0, 20);
+            foreach ($top20 as $row) {
+                $pct = round(100 * $row['plays'] / $total_plays, 1);
+                echo '<tr>';
+                echo '<td style="padding:3px 0">'.esc_html($row['country_name'] ?: $row['country_code']).'</td>';
+                echo '<td style="text-align:right;color:#646970">'.esc_html(number_format($row['plays'])).'</td>';
+                echo '<td style="text-align:right;width:60px">';
+                echo '<div style="background:#f0f0f1;border-radius:4px;overflow:hidden;height:14px;width:60px;display:inline-block;vertical-align:middle">';
+                echo '<div style="background:var(--aipex-brand,#e4005a);height:14px;width:'.esc_attr(min(100,$pct)).'%"></div>';
+                echo '</div> <span style="color:#646970">'.esc_html($pct).'%</span></td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table></div>';
+            echo '</div>'; // flex row
+
+            // ── Top Episodes ──
+            if ($top_eps) {
+                echo '<div style="'.$section_style.'">';
+                echo '<h3 style="margin-top:0">Most Played Episodes</h3>';
+                echo '<table class="widefat striped" style="font-size:13px"><thead><tr><th>Episode</th><th style="width:100px;text-align:right">Plays</th></tr></thead><tbody>';
+                foreach ($top_eps as $row) {
+                    $ep_id = (int)$row['episode_id'];
+                    echo '<tr><td><a href="'.esc_url(get_edit_post_link($ep_id)).'">'.esc_html(get_the_title($ep_id)).'</a></td>';
+                    echo '<td style="text-align:right">'.esc_html(number_format($row['plays'])).'</td></tr>';
+                }
+                echo '</tbody></table></div>';
+            }
+
+            // ── Chart.js + Google Charts scripts ──
+            $brand = sanitize_hex_color(Aipex_Podcast_Settings::get('brand_color')) ?: '#e4005a';
+            $palette = ["'$brand'","'#f9a8d4'","'#fdba74'","'#86efac'","'#93c5fd'","'#c4b5fd'","'#fde68a'"];
+            $browser_labels = wp_json_encode(array_column($browsers,'browser'));
+            $browser_data   = wp_json_encode(array_map('intval', array_column($browsers,'plays')));
+            $device_labels  = wp_json_encode(array_column($devices,'device_type'));
+            $device_data    = wp_json_encode(array_map('intval', array_column($devices,'plays')));
+            $map_rows = [];
+            foreach ($countries as $c) $map_rows[] = [esc_js($c['country_name']), (int)$c['plays']];
+            $map_json = wp_json_encode($map_rows);
+            ?>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+            <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+            <script>
+            (function(){
+                // Chart.js — browser
+                var bCtx=document.getElementById('aipex-browser-chart');
+                if(bCtx) new Chart(bCtx,{type:'doughnut',data:{labels:<?php echo $browser_labels;?>,datasets:[{data:<?php echo $browser_data;?>,backgroundColor:[<?php echo implode(',',$palette);?>],borderWidth:2}]},options:{plugins:{legend:{position:'bottom'}},responsive:true,maintainAspectRatio:true}});
+
+                // Chart.js — device
+                var dCtx=document.getElementById('aipex-device-chart');
+                if(dCtx) new Chart(dCtx,{type:'doughnut',data:{labels:<?php echo $device_labels;?>,datasets:[{data:<?php echo $device_data;?>,backgroundColor:[<?php echo implode(',',$palette);?>],borderWidth:2}]},options:{plugins:{legend:{position:'bottom'}},responsive:true,maintainAspectRatio:true}});
+
+                // Google Charts GeoChart — world map
+                google.charts.load('current',{packages:['geochart']});
+                google.charts.setOnLoadCallback(function(){
+                    var mapData=[['Country','Plays']].concat(<?php echo $map_json;?>);
+                    var data=google.visualization.arrayToDataTable(mapData);
+                    var chart=new google.visualization.GeoChart(document.getElementById('aipex-geo-map'));
+                    chart.draw(data,{colorAxis:{colors:['#fce7f3','<?php echo esc_js($brand);?>']},backgroundColor:'#f6f7f7',datalessRegionColor:'#e5e7eb',tooltip:{isHtml:true}});
+                });
+            })();
+            </script>
+            <?php
+        }
+
+        echo '<p style="margin-top:24px;color:#9ca3af;font-size:12px">Aipex Podcast System '.esc_html(AIPEX_PODCAST_VERSION).' · Play data collected from audio elements on the front end · IP addresses anonymised, never stored in full.</p>';
+        echo '</div>';
     }
 
     public static function shortcodes(){

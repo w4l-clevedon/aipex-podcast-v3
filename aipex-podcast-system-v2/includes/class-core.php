@@ -17,8 +17,8 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_nopriv_aipex_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_grid_load_more']);
         add_action('wp_ajax_aipex_relationship_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_relationship_grid_load_more']);
         add_action('wp_ajax_nopriv_aipex_relationship_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_relationship_grid_load_more']);
-        add_action('wp_ajax_aipex_search', ['Aipex_Podcast_Shortcodes','ajax_search']);
-        add_action('wp_ajax_nopriv_aipex_search', ['Aipex_Podcast_Shortcodes','ajax_search']);
+        add_action('wp_ajax_aipex_track_play', ['Aipex_Podcast_Analytics','ajax_track_play']);
+        add_action('wp_ajax_nopriv_aipex_track_play', ['Aipex_Podcast_Analytics','ajax_track_play']);
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);
@@ -77,6 +77,7 @@ class Aipex_Podcast_Core {
         $key = 'aipex_relationships_schema_version';
         if (get_option($key) !== AIPEX_PODCAST_VERSION) {
             Aipex_Podcast_Relationships::migrate_all();
+            Aipex_Podcast_Analytics::maybe_create_table();
             update_option($key, AIPEX_PODCAST_VERSION, false);
         }
     }
@@ -96,6 +97,11 @@ class Aipex_Podcast_Core {
         wp_register_style('aipex-podcast', AIPEX_PODCAST_URL.'assets/podcast.css', [], AIPEX_PODCAST_VERSION);
         wp_add_inline_style('aipex-podcast', Aipex_Podcast_Settings::inline_css());
         wp_register_script('aipex-podcast', AIPEX_PODCAST_URL.'assets/podcast.js', ['jquery'], AIPEX_PODCAST_VERSION, true);
-        wp_localize_script('aipex-podcast','AipexPodcast',['ajaxurl'=>admin_url('admin-ajax.php'),'nonce'=>wp_create_nonce('aipex_podcast')]);
+        $js_data = [
+            'ajaxurl'    => admin_url('admin-ajax.php'),
+            'nonce'      => wp_create_nonce('aipex_podcast'),
+            'episode_id' => is_singular('aipex_podcast') ? get_the_ID() : 0,
+        ];
+        wp_localize_script('aipex-podcast', 'AipexPodcast', $js_data);
     }
 }

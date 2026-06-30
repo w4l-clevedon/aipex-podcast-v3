@@ -106,3 +106,18 @@ jQuery(function($){
     $sel.trigger('blur');
     $sel.closest('.aipex-filters').find('.aipex-filter-btn[data-id="'+entity_id+'"]').trigger('click');
   });
+
+  // Play tracking — fires once per audio element per page load, silently.
+  // The episode ID is read from the nearest [data-episode-id] ancestor or
+  // from the page body's data attribute set by wp_localize_script.
+  var trackedAudio = new Set();
+  $(document).on('play','audio',function(){
+    var $audio=$(this);
+    if(trackedAudio.has(this)) return;
+    trackedAudio.add(this);
+    var episode_id = $audio.closest('[data-episode-id]').data('episode-id')
+                  || $('body').data('aipex-episode-id')
+                  || (AipexPodcast && AipexPodcast.episode_id ? AipexPodcast.episode_id : 0);
+    if(!episode_id || !AipexPodcast || !AipexPodcast.ajaxurl) return;
+    $.post(AipexPodcast.ajaxurl,{action:'aipex_track_play',nonce:AipexPodcast.nonce,episode_id:episode_id});
+  });
