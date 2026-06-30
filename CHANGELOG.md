@@ -1,4 +1,28 @@
-# Aipex Podcast System — v3.0.0
+# Aipex Podcast System — v3.0.1
+
+## v3.0.1
+
+- **Renamed the presenter rewrite slug from `presenter` to `radio-presenter`.**
+  On womensradiostation.com, WP Job Manager already owns a rewrite rule for
+  the generic word "presenter" and is registered ahead of this plugin's rule,
+  so it always won the match first and produced a 404 even though the post
+  type registration itself was correct. A single-word generic slug was always
+  a collision risk on any site with a handful of other plugins active — that
+  matters more once this plugin runs on sites other than this one.
+- Replaced the rewrite-rule-based legacy redirect with a 404-path-matching
+  redirect (`maybe_redirect_legacy_presenter_url` in `class-core.php`). This
+  catches both the old `/host/slug/` and `/presenter/slug/` URLs and sends
+  them to the current `/radio-presenter/slug/` permalink with a 301,
+  regardless of which other plugin's rewrite rule "claims" the path first —
+  it only needs WordPress to have already given up and reached its 404
+  template, which is exactly what was happening before this fix.
+- If `/radio-presenter/` ever collides with something else on a future
+  install, the slug is defined in one place (`class-post-types.php`) and easy
+  to change again — this is exactly the kind of per-site conflict a future
+  Settings-screen "URL slug" field should let installers configure without
+  touching code.
+
+## v3.0.0
 
 Consolidated rebuild of `aipex-podcast-system-v2`, fixing a set of structural
 bugs found during code review plus the first steps toward making this plugin

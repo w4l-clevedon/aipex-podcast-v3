@@ -19,10 +19,21 @@ class Aipex_Podcast_Post_Types {
         // exactly what caused presenter permalinks to 404 — two competing
         // rewrite rule sets fighting for the same request. Do not re-register
         // this post type anywhere else in the plugin.
+        //
+        // The slug is deliberately namespaced as "radio-presenter" rather than
+        // the generic "presenter". On womensradiostation.com, WP Job Manager
+        // already registers its own rewrite rule for plain "presenter" (likely
+        // from a job category/field of that name), and since its rule is
+        // registered first, it always wins the match before WordPress ever
+        // reaches this post type's rule — resulting in a 404 even though the
+        // post itself exists and is published. A generic English word is a
+        // real collision risk on any WordPress site with a handful of active
+        // plugins, which matters a lot once this plugin is installed on sites
+        // other than this one.
         register_post_type('aipex_presenter', [
             'labels'=>['name'=>'Hosts / Presenters','singular_name'=>'Host / Presenter','add_new_item'=>'Add Host / Presenter','edit_item'=>'Edit Host / Presenter'],
-            'public'=>true,'publicly_queryable'=>true,'exclude_from_search'=>false,'query_var'=>true,'show_ui'=>true,'show_in_menu'=>'edit.php?post_type=aipex_podcast','has_archive'=>'presenters',
-            'rewrite'=>['slug'=>'presenter','with_front'=>false],'supports'=>['title','editor','thumbnail','excerpt'],'show_in_rest'=>true
+            'public'=>true,'publicly_queryable'=>true,'exclude_from_search'=>false,'query_var'=>true,'show_ui'=>true,'show_in_menu'=>'edit.php?post_type=aipex_podcast','has_archive'=>'radio-presenters',
+            'rewrite'=>['slug'=>'radio-presenter','with_front'=>false],'supports'=>['title','editor','thumbnail','excerpt'],'show_in_rest'=>true
         ]);
         register_post_type('aipex_guest', [
             'labels'=>['name'=>'Guests','singular_name'=>'Guest'],'public'=>true,'publicly_queryable'=>true,'query_var'=>true,'show_ui'=>true,'show_in_menu'=>'edit.php?post_type=aipex_podcast','has_archive'=>'guests','rewrite'=>['slug'=>'guest','with_front'=>false],'supports'=>['title','editor','thumbnail','excerpt'],'show_in_rest'=>true

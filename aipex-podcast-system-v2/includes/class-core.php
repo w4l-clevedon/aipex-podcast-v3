@@ -22,20 +22,33 @@ class Aipex_Podcast_Core {
         Aipex_Podcast_Elementor::init();
     }
     public static function register_legacy_redirect(){
-        // v2 had a conflicting second post-type registration that briefly used
-        // the /host/ slug instead of /presenter/. If any of those links were
-        // ever indexed or shared, send them to the correct presenter URL
-        // instead of letting them 404.
-        add_rewrite_rule('^host/([^/]+)/?$', 'index.php?aipex_legacy_host_redirect=$matches[1]', 'top');
-        add_filter('query_vars', function($vars){ $vars[] = 'aipex_legacy_host_redirect'; return $vars; });
-        add_action('template_redirect', function(){
-            $slug = get_query_var('aipex_legacy_host_redirect');
-            if (!$slug) return;
-            $post = get_page_by_path(sanitize_title($slug), OBJECT, 'aipex_presenter');
-            if ($post) wp_safe_redirect(get_permalink($post), 301);
-            else wp_safe_redirect(get_post_type_archive_link('aipex_presenter') ?: home_url('/'), 301);
-            exit;
-        });
+        // Two slugs need to redirect to the current presenter permalink
+        // (/radio-presenter/slug/):
+        //  - /host/slug/  — used briefly by a conflicting duplicate post-type
+        //    registration in v2 (since removed).
+        //  - /presenter/slug/ — the slug used before this rename. On
+        //    womensradiostation.com, WP Job Manager already owns a rewrite
+        //    rule for plain "presenter" and is registered ahead of anything
+        //    this plugin adds, so we can NOT rely on add_rewrite_rule() to
+        //    win that race — Job Manager's rule will keep matching first and
+        //    WordPress will keep 404'ing before our rule is ever reached.
+        //    Instead we catch this on the 404 itself: if WordPress already
+        //    gave up on the request, check whether the path looks like an
+        //    old presenter URL and redirect, regardless of which rewrite
+        //    rule "claimed" it first.
+        add_action('template_redirect', [__CLASS__, 'maybe_redirect_legacy_presenter_url']);
+    }
+    public static function maybe_redirect_legacy_presenter_url(){
+        if (!is_404()) return;
+        $path = trim((string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), '/');
+        $home_path = trim((string) wp_parse_url(home_url('/'), PHP_URL_PATH), '/');
+        if ($home_path && str_starts_with($path, $home_path . '/')) $path = substr($path, strlen($home_path) + 1);
+        if (!preg_match('~^(?:host|presenter)/([^/]+)/?$~', $path, $m)) return;
+        $slug = sanitize_title($m[1]);
+        $post = get_page_by_path($slug, OBJECT, 'aipex_presenter');
+        if ($post && $post->post_status === 'publish') wp_safe_redirect(get_permalink($post), 301);
+        else wp_safe_redirect(get_post_type_archive_link('aipex_presenter') ?: home_url('/'), 301);
+        exit;
     }
     public static function maybe_flush_rewrites(){
         $key='aipex_podcast_rewrite_version';
