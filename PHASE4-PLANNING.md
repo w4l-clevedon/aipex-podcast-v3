@@ -36,29 +36,9 @@ display work.
 **Risk: low.** Self-contained, doesn't touch existing code paths, easy to
 roll back (drop the table) if it turns out not to be useful.
 
-## 2. Live "listeners online" count (higher risk, lower value for the effort)
+## 2. Geographic location of listeners shown on a map
 
-**What it needs:**
-- A heartbeat: every visitor's browser pings an AJAX endpoint every N
-  seconds (e.g. 30s) while a page is open, which writes/refreshes a
-  short-lived transient keyed by a session ID.
-- Dashboard counts active transients to approximate "online now."
-- **This cannot be cached.** If the site ever adds page caching (likely, on
-  a multi-purpose theme like this one, once traffic grows) the heartbeat
-  AJAX call still has to bypass it, which is an extra thing to remember to
-  exclude in cache plugin config.
-- Adds a recurring AJAX request from every visitor's browser, all the time,
-  whether they're actually listening to a podcast or just browsing — that's
-  real, continuous server load for a "nice to have" number, not "currently
-  playing X people are listening to this episode" (which would be more
-  useful and require knowing playback state, not just page presence).
 
-**Recommendation:** the value-to-effort ratio here is weak compared to play
-counts. If the actual goal is "show this is a living, active site," a
-"plays this week" trending number (built on top of Phase 4.1's play-count
-table) achieves that more honestly and far more cheaply than an online-now
-ping. Suggest treating true real-time presence as a "build only if a
-specific need shows up" item, not a default part of Phase 4.
 
 ## Suggested order if/when this gets built
 1. Play-count table + tracking (self-contained, useful immediately)
