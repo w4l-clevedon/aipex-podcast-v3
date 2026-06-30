@@ -38,9 +38,9 @@ roll back (drop the table) if it turns out not to be useful.
 
 ## 2. Geographic location of listeners shown on a map
 
-
+Shown on dashboard
 
 ## Suggested order if/when this gets built
 1. Play-count table + tracking (self-contained, useful immediately)
 2. Dashboard "Most played" + per-episode counts
-3. Revisit live listener count only if there's a concrete reason for it
+3. Geographic location
