@@ -25,6 +25,8 @@ class Aipex_Podcast_Core {
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_migrate_relationships']);
         add_action('wp_ajax_aipex_rel_sync_start', ['Aipex_Podcast_Core','ajax_rel_sync_start']);
         add_action('wp_ajax_aipex_rel_sync_batch', ['Aipex_Podcast_Core','ajax_rel_sync_batch']);
+        add_action('wp_ajax_aipex_title_match_start', ['Aipex_Podcast_Admin','ajax_title_match_start']);
+        add_action('wp_ajax_aipex_title_match_batch', ['Aipex_Podcast_Admin','ajax_title_match_batch']);
         add_action('init', ['Aipex_Podcast_Core','register_legacy_redirect'], 7);
         Aipex_Podcast_Elementor::init();
     }

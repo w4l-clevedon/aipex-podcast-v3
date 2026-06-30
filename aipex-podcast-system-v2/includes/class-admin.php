@@ -18,6 +18,8 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_apply_txt_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_txt_review($_POST['txt_review']??[]); self::notice($msg); }
         if(isset($_POST['aipex_scan_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::scan_duplicates(); self::notice($msg); }
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
+        if(isset($_POST['aipex_apply_title_match_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_title_match_review($_POST['title_match_review']??[]); self::notice($msg); }
+        if(isset($_POST['aipex_clear_title_match'])){ check_admin_referer('aipex_tools'); delete_option('aipex_title_match_review'); self::notice('Title match review list cleared.'); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
         if(isset($_POST['aipex_remove_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::remove_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id'))); self::notice($msg); }
     }
@@ -117,6 +119,10 @@ class Aipex_Podcast_Admin {
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
+        echo '<h2>Episode → Show Matcher</h2>';
+        echo '<p>Scans episodes that have no show assigned and matches them against show titles using the episode title. Episodes where the show name appears in the episode title will match confidently (e.g. "All Things Autism – Guest Name" → <em>All Things Autism</em>).</p>';
+        echo '<p><strong>Auto-links</strong> anything scoring 90% or above. <strong>Holds for your review</strong> anything scoring 60–89%. Skips below 60% and anything already assigned.</p>';
+        self::render_title_match_ui();
         echo '<h2>Relationship Index</h2>';
         echo '<p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Processes 50 posts per AJAX batch so it won\'t time out on a large catalogue. Safe to run at any time — no posts are modified.</p>';
         self::render_rel_sync_ui();
@@ -126,6 +132,7 @@ class Aipex_Podcast_Admin {
         echo '<p><button class="button button-primary" name="aipex_apply_default_sponsor" value="1">Apply Default Sponsor To Shows</button> ';
         echo '<button class="button" name="aipex_remove_default_sponsor" value="1" onclick="return confirm(&quot;Remove this sponsor from all shows?&quot;)">Remove This Sponsor From Shows</button></p>';
         echo '</form>';
+        self::render_title_match_review();
         self::render_txt_review();
         self::render_duplicates();
         echo '</div>';
@@ -391,5 +398,221 @@ class Aipex_Podcast_Admin {
         echo '<table class="widefat striped"><thead><tr><th>Apply</th><th>TXT File</th><th>Type</th><th>Confidence</th><th>Suggested</th><th>Target</th></tr></thead><tbody>';
         foreach($items as $i=>$item){ $type=$item['type']==='series_overview'?'aipex_series':'aipex_podcast'; $posts=get_posts(['post_type'=>$type,'post_status'=>'any','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']); echo '<tr><td><input type="checkbox" name="txt_review['.(int)$i.'][apply]" value="1"></td><td>'.esc_html($item['name']).'</td><td>'.esc_html($item['type']).'</td><td>'.esc_html($item['score']).'%</td><td>'.esc_html($item['target_title']).'</td><td><select name="txt_review['.(int)$i.'][target_id]"><option value="0">— Select —</option>'; foreach($posts as $p) echo '<option value="'.(int)$p->ID.'" '.selected((int)$item['target_id'],(int)$p->ID,false).'>'.esc_html($p->post_title).'</option>'; echo '</select></td></tr>'; }
         echo '</tbody></table><p><button class="button button-primary" name="aipex_apply_txt_review" value="1">Apply Selected TXT Imports</button></p></form>';
+    }
+
+    // =========================================================================
+    // Episode → Show title matcher
+    // =========================================================================
+    const TITLE_MATCH_REVIEW = 'aipex_title_match_review';
+    const TITLE_MATCH_STATE  = 'aipex_title_match_state';
+
+    public static function render_title_match_ui(){
+        $nonce = wp_create_nonce('aipex_title_match');
+        $review_count = count(get_option(self::TITLE_MATCH_REVIEW, []));
+        ?>
+        <div id="aipex-tm-wrap" style="max-width:700px;margin-top:10px">
+            <p>
+                <button type="button" class="button button-primary" id="aipex-tm-start">Start Scan</button>
+                <button type="button" class="button" id="aipex-tm-stop" style="display:none">Stop</button>
+                <?php if($review_count): ?><strong style="margin-left:12px"><?php echo esc_html($review_count); ?> episodes waiting in the review table below.</strong><?php endif; ?>
+                <span id="aipex-tm-status" style="margin-left:12px;color:#646970"></span>
+            </p>
+            <div style="height:16px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:8px">
+                <div id="aipex-tm-bar" style="height:16px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s ease"></div>
+            </div>
+            <pre id="aipex-tm-log" style="background:#f6f7f7;padding:10px;max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+        </div>
+        <script>
+        jQuery(function($){
+            var running=false, nonce=<?php echo wp_json_encode($nonce); ?>;
+            var $start=$('#aipex-tm-start'),$stop=$('#aipex-tm-stop');
+            var $bar=$('#aipex-tm-bar'),$status=$('#aipex-tm-status'),$log=$('#aipex-tm-log');
+            function log(msg){ $log.text($log.text()?$log.text()+'\n'+msg:msg); $log.scrollTop($log[0].scrollHeight); }
+            function step(action){
+                if(!running) return;
+                $.post(ajaxurl,{action:action,nonce:nonce},function(resp){
+                    if(!resp||!resp.success){ running=false; $start.prop('disabled',false); $stop.hide(); log('ERROR: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Unknown error')); return; }
+                    var d=resp.data;
+                    $bar.css('width',d.pct+'%');
+                    $.each(d.log||[],function(_,l){ log(l); });
+                    $status.text('Checked '+d.done+' of '+d.total+' (linked: '+d.linked+', review: '+d.review+', skipped: '+d.skipped+')');
+                    if(d.finished){ running=false; $start.prop('disabled',false); $stop.hide(); $bar.css('width','100%'); log('Scan complete. Refresh this page to see the review table.'); }
+                    else setTimeout(function(){ step('aipex_title_match_batch'); },200);
+                }).fail(function(xhr){ running=false; $start.prop('disabled',false); $stop.hide(); log('AJAX failed: HTTP '+xhr.status); });
+            }
+            $start.on('click',function(){ running=true; $log.text(''); $bar.css('width','0%'); $status.text('Starting…'); $start.prop('disabled',true); $stop.show(); step('aipex_title_match_start'); });
+            $stop.on('click',function(){ running=false; $start.prop('disabled',false); $stop.hide(); $status.text('Stopped — click Start to restart from the beginning.'); });
+        });
+        </script>
+        <?php
+    }
+
+    /**
+     * Returns all series posts as a cached lookup array keyed by ID for the
+     * duration of a single batch request.
+     */
+    private static function get_series_lookup(){
+        static $lookup = null;
+        if ($lookup !== null) return $lookup;
+        $lookup = [];
+        $series = get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1,'fields'=>'all']);
+        foreach ($series as $s) $lookup[$s->ID] = $s->post_title;
+        return $lookup;
+    }
+
+    /**
+     * For a single episode, finds the best-matching show by title substring
+     * matching. Returns ['show_id'=>int, 'score'=>int, 'show_title'=>string]
+     * or null if nothing scores above the minimum.
+     */
+    private static function best_show_match($episode_title, $min_score=60){
+        $series = self::get_series_lookup();
+        $best_id=0; $best_score=0; $best_title='';
+        foreach ($series as $sid => $stitle) {
+            $score = Aipex_Podcast_Fields::match_score($episode_title, $stitle);
+            if ($score > $best_score) { $best_score=$score; $best_id=$sid; $best_title=$stitle; }
+        }
+        if ($best_score < $min_score || !$best_id) return null;
+        return ['show_id'=>$best_id,'score'=>$best_score,'show_title'=>$best_title];
+    }
+
+    /**
+     * Applies a confirmed episode→show link: writes to the ACF field and
+     * syncs the relationship table. Writing to ACF ensures it shows in the
+     * admin editor, not just in the relationship query layer.
+     */
+    private static function link_episode_to_show($episode_id, $show_id){
+        Aipex_Podcast_Fields::update('series', [$show_id], $episode_id);
+        // Force a fresh sync so the relationship table reflects the write
+        // even if ACF's field key differs from the plain meta key
+        Aipex_Podcast_Relationships::sync_post($episode_id);
+    }
+
+    public static function ajax_title_match_start(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_title_match','nonce');
+
+        // Reset review list and scan state
+        delete_option(self::TITLE_MATCH_REVIEW);
+
+        // Build the list of episodes that have NO show currently assigned
+        $all_ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids','orderby'=>'ID','order'=>'ASC']);
+        $unassigned = [];
+        foreach ($all_ids as $id) {
+            $existing = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $id);
+            // episodes_for returns episodes-for-a-show; we need shows-for-an-episode
+            $shows = Aipex_Podcast_Relationships::shows_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $id);
+            if (empty($shows)) $unassigned[] = $id;
+        }
+
+        $state = ['total'=>count($all_ids),'unassigned'=>count($unassigned),'ids'=>$unassigned,'offset'=>0,'done'=>0,'linked'=>0,'review'=>0,'skipped'=>0];
+        set_transient(self::TITLE_MATCH_STATE, $state, HOUR_IN_SECONDS);
+
+        wp_send_json_success(array_merge(self::run_title_match_batch($state), ['log'=>['Found '.count($unassigned).' episodes with no show assigned out of '.count($all_ids).' total. Starting scan…']]));
+    }
+
+    public static function ajax_title_match_batch(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_title_match','nonce');
+        $state = get_transient(self::TITLE_MATCH_STATE);
+        if (!$state || !is_array($state)) wp_send_json_error(['message'=>'No scan in progress. Click Start to begin.']);
+        wp_send_json_success(self::run_title_match_batch($state));
+    }
+
+    private static function run_title_match_batch($state, $batch_size=30){
+        $slice = array_slice($state['ids'], $state['offset'], $batch_size);
+        $review = get_option(self::TITLE_MATCH_REVIEW, []); if(!is_array($review)) $review=[];
+        $log = [];
+
+        foreach ($slice as $episode_id) {
+            $title = get_the_title($episode_id);
+            $match = self::best_show_match($title);
+            $state['done']++;
+
+            if (!$match) {
+                $state['skipped']++;
+                continue; // No show scored ≥60% — skip silently
+            }
+
+            if ($match['score'] >= 90) {
+                // Confident — auto-link
+                self::link_episode_to_show($episode_id, $match['show_id']);
+                $state['linked']++;
+                $log[] = 'LINKED '.$match['score'].'%: '.mb_substr($title,0,60).' → '.$match['show_title'];
+            } else {
+                // Uncertain — add to review queue
+                $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'show_id'=>$match['show_id'],'show_title'=>$match['show_title'],'score'=>$match['score']];
+                $state['review']++;
+                $log[] = 'REVIEW '.$match['score'].'%: '.mb_substr($title,0,60).' → '.$match['show_title'].'?';
+            }
+        }
+
+        $state['offset'] += $batch_size;
+        $finished = $state['offset'] >= count($state['ids']);
+
+        update_option(self::TITLE_MATCH_REVIEW, $review, false);
+        if ($finished) {
+            delete_transient(self::TITLE_MATCH_STATE);
+            $log[] = 'Done. Auto-linked: '.$state['linked'].'. Needs review: '.$state['review'].'. Skipped (no match): '.$state['skipped'].'.';
+        } else {
+            set_transient(self::TITLE_MATCH_STATE, $state, HOUR_IN_SECONDS);
+        }
+
+        $total = max(1, count($state['ids']));
+        return [
+            'done'     => $state['done'],
+            'total'    => count($state['ids']),
+            'linked'   => $state['linked'],
+            'review'   => $state['review'],
+            'skipped'  => $state['skipped'],
+            'finished' => $finished,
+            'pct'      => min(100, (int)round(100 * $state['offset'] / $total)),
+            'log'      => $log,
+        ];
+    }
+
+    public static function render_title_match_review(){
+        $items = get_option(self::TITLE_MATCH_REVIEW, []);
+        if (!$items) return;
+        $series = get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
+        echo '<hr><h2>Episode → Show: Needs Review ('.count($items).' episodes)</h2>';
+        echo '<p>These episodes scored 60–89% confidence. The suggested show is pre-selected — change the dropdown if the suggestion is wrong, or leave the checkbox unticked to skip.</p>';
+        echo '<form method="post">'; wp_nonce_field('aipex_tools');
+        echo '<p>';
+        echo '<button class="button button-primary" name="aipex_apply_title_match_review" value="1">Apply Selected</button> ';
+        echo '<button class="button" name="aipex_clear_title_match" value="1" onclick="return confirm(\'Clear the review list?\')">Clear List</button>';
+        echo ' <label style="margin-left:16px"><input type="checkbox" id="aipex-tm-check-all"> Select all</label>';
+        echo '</p>';
+        echo '<table class="widefat striped"><thead><tr><th style="width:32px">Apply</th><th>Episode</th><th style="width:60px">Score</th><th>Assign to Show</th></tr></thead><tbody>';
+        foreach ($items as $i => $item) {
+            $episode_id = (int)$item['episode_id'];
+            echo '<tr>';
+            echo '<td><input type="checkbox" class="aipex-tm-cb" name="title_match_review['.(int)$i.'][apply]" value="1"></td>';
+            echo '<td><a href="'.esc_url(get_edit_post_link($episode_id)).'" target="_blank">'.esc_html($item['episode_title']).'</a></td>';
+            echo '<td><strong>'.esc_html($item['score']).'%</strong></td>';
+            echo '<td><select name="title_match_review['.(int)$i.'][show_id]"><option value="0">— Skip —</option>';
+            foreach ($series as $s) {
+                $selected = ((int)$item['show_id'] === (int)$s->ID) ? 'selected' : '';
+                echo '<option value="'.(int)$s->ID.'" '.$selected.'>'.esc_html($s->post_title).'</option>';
+            }
+            echo '</select></td></tr>';
+        }
+        echo '</tbody></table></form>';
+        echo '<script>jQuery(function($){ $("#aipex-tm-check-all").on("change",function(){ $(".aipex-tm-cb").prop("checked",this.checked); }); });</script>';
+    }
+
+    public static function apply_title_match_review($posted){
+        $items = get_option(self::TITLE_MATCH_REVIEW, []);
+        $remaining = []; $done = 0;
+        foreach ($items as $i => $item) {
+            $row = $posted[$i] ?? [];
+            if (empty($row['apply'])){ $remaining[] = $item; continue; }
+            $show_id = (int)($row['show_id'] ?? 0);
+            if (!$show_id){ $remaining[] = $item; continue; }
+            self::link_episode_to_show((int)$item['episode_id'], $show_id);
+            $done++;
+        }
+        update_option(self::TITLE_MATCH_REVIEW, array_values($remaining), false);
+        return 'Applied '.$done.' episode→show links. '.count($remaining).' still in review.';
     }
 }
