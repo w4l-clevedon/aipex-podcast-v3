@@ -121,7 +121,7 @@ class Aipex_Podcast_Admin {
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
         echo '<h2>Episode → Show Matcher</h2>';
         echo '<p>Scans episodes that have no show assigned and matches them against show titles using the episode title. Episodes where the show name appears in the episode title will match confidently (e.g. "All Things Autism – Guest Name" → <em>All Things Autism</em>).</p>';
-        echo '<p><strong>Auto-links</strong> anything scoring 90% or above. <strong>Holds for your review</strong> anything scoring 60–89%. Skips below 60% and anything already assigned.</p>';
+        echo '<p><strong>Auto-links</strong> anything scoring 90%+ (show name found in episode title). <strong>Holds for your review</strong> anything scoring 60–89% (uncertain) and below 60% (no confident match — you pick the show manually). Nothing is silently dropped.</p>';
         self::render_title_match_ui();
         echo '<h2>Relationship Index</h2>';
         echo '<p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Processes 50 posts per AJAX batch so it won\'t time out on a large catalogue. Safe to run at any time — no posts are modified.</p>';
@@ -461,18 +461,19 @@ class Aipex_Podcast_Admin {
     }
 
     /**
-     * For a single episode, finds the best-matching show by title substring
-     * matching. Returns ['show_id'=>int, 'score'=>int, 'show_title'=>string]
-     * or null if nothing scores above the minimum.
+     * For a single episode, finds the best-matching show by title similarity.
+     * Always returns the best candidate found (even at very low scores) so
+     * the review table can show a suggestion for every episode. Returns null
+     * only if there are no series at all.
      */
-    private static function best_show_match($episode_title, $min_score=60){
+    private static function best_show_match($episode_title){
         $series = self::get_series_lookup();
+        if (!$series) return null;
         $best_id=0; $best_score=0; $best_title='';
         foreach ($series as $sid => $stitle) {
             $score = Aipex_Podcast_Fields::match_score($episode_title, $stitle);
             if ($score > $best_score) { $best_score=$score; $best_id=$sid; $best_title=$stitle; }
         }
-        if ($best_score < $min_score || !$best_id) return null;
         return ['show_id'=>$best_id,'score'=>$best_score,'show_title'=>$best_title];
     }
 
@@ -530,8 +531,9 @@ class Aipex_Podcast_Admin {
             $state['done']++;
 
             if (!$match) {
+                // No series exist at all — skip
                 $state['skipped']++;
-                continue; // No show scored ≥60% — skip silently
+                continue;
             }
 
             if ($match['score'] >= 90) {
@@ -539,11 +541,17 @@ class Aipex_Podcast_Admin {
                 self::link_episode_to_show($episode_id, $match['show_id']);
                 $state['linked']++;
                 $log[] = 'LINKED '.$match['score'].'%: '.mb_substr($title,0,60).' → '.$match['show_title'];
-            } else {
-                // Uncertain — add to review queue
+            } elseif ($match['score'] >= 60) {
+                // Uncertain but plausible — review with suggestion pre-selected
                 $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'show_id'=>$match['show_id'],'show_title'=>$match['show_title'],'score'=>$match['score']];
                 $state['review']++;
                 $log[] = 'REVIEW '.$match['score'].'%: '.mb_substr($title,0,60).' → '.$match['show_title'].'?';
+            } else {
+                // Low confidence — add to review with best guess shown but
+                // no show pre-selected, so user must pick manually
+                $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'show_id'=>0,'show_title'=>$match['show_title'].' ('.$match['score'].'% — no confident match)','score'=>$match['score']];
+                $state['review']++;
+                $log[] = 'UNMATCHED '.$match['score'].'%: '.mb_substr($title,0,60).' (best guess: '.$match['show_title'].')';
             }
         }
 
@@ -576,7 +584,11 @@ class Aipex_Podcast_Admin {
         if (!$items) return;
         $series = get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
         echo '<hr><h2>Episode → Show: Needs Review ('.count($items).' episodes)</h2>';
-        echo '<p>These episodes scored 60–89% confidence. The suggested show is pre-selected — change the dropdown if the suggestion is wrong, or leave the checkbox unticked to skip.</p>';
+        echo '<p>';
+        echo '<strong style="color:#b45309">⚠ 60–89%</strong> — uncertain match, show pre-selected, check it\'s correct. ';
+        echo '<strong style="color:#b91c1c">✗ Below 60%</strong> — no confident match found, dropdown defaults to "— Skip —", you must pick the show manually. ';
+        echo 'Leave unticked to skip for now.';
+        echo '</p>';
         echo '<form method="post">'; wp_nonce_field('aipex_tools');
         echo '<p>';
         echo '<button class="button button-primary" name="aipex_apply_title_match_review" value="1">Apply Selected</button> ';
@@ -586,10 +598,12 @@ class Aipex_Podcast_Admin {
         echo '<table class="widefat striped"><thead><tr><th style="width:32px">Apply</th><th>Episode</th><th style="width:60px">Score</th><th>Assign to Show</th></tr></thead><tbody>';
         foreach ($items as $i => $item) {
             $episode_id = (int)$item['episode_id'];
+            $score_color = $item['score'] >= 60 ? '#b45309' : '#b91c1c';
+            $score_label = $item['score'] >= 60 ? $item['score'].'%' : $item['score'].'% ✗';
             echo '<tr>';
             echo '<td><input type="checkbox" class="aipex-tm-cb" name="title_match_review['.(int)$i.'][apply]" value="1"></td>';
             echo '<td><a href="'.esc_url(get_edit_post_link($episode_id)).'" target="_blank">'.esc_html($item['episode_title']).'</a></td>';
-            echo '<td><strong>'.esc_html($item['score']).'%</strong></td>';
+            echo '<td><strong style="color:'.esc_attr($score_color).'">'.esc_html($score_label).'</strong></td>';
             echo '<td><select name="title_match_review['.(int)$i.'][show_id]"><option value="0">— Skip —</option>';
             foreach ($series as $s) {
                 $selected = ((int)$item['show_id'] === (int)$s->ID) ? 'selected' : '';
