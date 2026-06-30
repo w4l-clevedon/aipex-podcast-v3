@@ -1,4 +1,37 @@
-# Aipex Podcast System — v3.1.0
+# Aipex Podcast System — v3.2.0
+
+## v3.2.0 — Phase 2: Entity API + generic Relationship Grid
+
+- **Fixed**: presenter contact email/phone were captured by ACF but never
+  rendered anywhere on the front end (`link_icons()` in `class-shortcodes.php`
+  was missing them from its field map).
+- **New `Aipex_Podcast_Entity` class** (`class-entity.php`) — a thin,
+  type-aware wrapper: `Aipex_Podcast_Entity::load($id)` then
+  `->title() / ->url() / ->image() / ->episodes() / ->shows() / ->hosts() /
+  ->guests() / ->sponsors() / ->social_links() / ->contact()`, regardless of
+  whether the loaded entity is a host, guest, sponsor or show. Built on top
+  of `Aipex_Podcast_Relationships` and `Aipex_Podcast_Fields` — adds no new
+  data access, just a consistent shape for calling code to work with.
+- **New `[aipex_relationship_grid]` shortcode**, with `relationship`
+  (episodes/shows/hosts/guests/sponsors), `entity_id` (optional override) and
+  `limit` attributes, plus AJAX load-more. This is the one widget that
+  replaces the "one shortcode per pairing" pattern — and specifically covers
+  pairings that never had a dedicated shortcode at all (a host's shows, a
+  sponsor's guests, etc.), since those are now just another `relationship`
+  value on the same widget rather than new code.
+- **New Elementor widget**: "Relationship Grid", with its own Relationship /
+  Entity ID / Limit controls (the existing shortcode-wrapper widget class
+  only exposes a Limit control, so this one is a dedicated class).
+- **Existing shortcodes unchanged** — `aipex_presenter_podcasts`,
+  `aipex_series_podcasts` etc. still work exactly as before. They were
+  deliberately left as-is rather than rewritten as thin wrappers in this
+  pass, since they already read from the relationship table via Phase 1 and
+  rewriting working code carries real risk for no functional gain on a live
+  site. Worth revisiting once the generic widget has been used in practice.
+
+**Not in this release** (Phase 3): Elementor widget consolidation beyond
+the one new widget above, and the admin screen redesign (per-entity
+Overview/Relationships/Episodes/Shows/Import/Diagnostics/AI/History layout).
 
 ## v3.1.0 — Phase 1 of the relationship architecture
 

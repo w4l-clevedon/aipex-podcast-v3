@@ -42,6 +42,44 @@ if (class_exists('\\Elementor\\Widget_Base')) {
     }
 }
 
+/**
+ * Relationship Grid gets its own widget class rather than reusing the
+ * generic shortcode-wrapper above, since it needs real controls (which
+ * relationship, optional entity override) instead of just a limit field.
+ */
+if (class_exists('\\Elementor\\Widget_Base')) {
+    class Aipex_Podcast_Elementor_Relationship_Grid extends \Elementor\Widget_Base {
+        public function get_name(){ return 'aipex_widget_relationship_grid'; }
+        public function get_title(){ return 'Relationship Grid'; }
+        public function get_icon(){ return 'eicon-posts-grid'; }
+        public function get_categories(){ return ['aipex-podcast-system']; }
+
+        protected function register_controls(){
+            $this->start_controls_section('content', ['label' => 'Content']);
+            $this->add_control('relationship', [
+                'label' => 'Relationship',
+                'type' => \Elementor\Controls_Manager::SELECT,
+                'default' => 'episodes',
+                'options' => ['episodes' => 'Episodes', 'shows' => 'Shows', 'hosts' => 'Hosts', 'guests' => 'Guests', 'sponsors' => 'Sponsors'],
+                'description' => 'What to show, relative to the current page (or the Entity ID below if set).',
+            ]);
+            $this->add_control('entity_id', [
+                'label' => 'Entity ID (optional)',
+                'type' => \Elementor\Controls_Manager::NUMBER,
+                'default' => 0,
+                'description' => 'Leave at 0 to use the entity the current page is about.',
+            ]);
+            $this->add_control('limit', ['label' => 'Limit', 'type' => \Elementor\Controls_Manager::NUMBER, 'default' => 12]);
+            $this->end_controls_section();
+        }
+
+        protected function render(){
+            $s = $this->get_settings_for_display();
+            echo do_shortcode('[aipex_relationship_grid relationship="' . esc_attr($s['relationship'] ?? 'episodes') . '" entity_id="' . intval($s['entity_id'] ?? 0) . '" limit="' . intval($s['limit'] ?? 12) . '"]');
+        }
+    }
+}
+
 class Aipex_Podcast_Elementor {
     public static function init(){
         add_action('elementor/widgets/register', [__CLASS__, 'register']);
@@ -88,6 +126,9 @@ class Aipex_Podcast_Elementor {
         if (!class_exists('Aipex_Podcast_Elementor_Shortcode_Widget')) return;
         foreach (self::widget_definitions() as [$name, $title, $shortcode]) {
             $widgets_manager->register(new Aipex_Podcast_Elementor_Shortcode_Widget([], null, $name, $title, $shortcode));
+        }
+        if (class_exists('Aipex_Podcast_Elementor_Relationship_Grid')) {
+            $widgets_manager->register(new Aipex_Podcast_Elementor_Relationship_Grid());
         }
     }
 }

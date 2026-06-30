@@ -50,8 +50,9 @@ jQuery(function($){
   $(document).on('click','.aipex-load-more',function(){
     var $btn=$(this), ctx=$btn.data('context')||{}, kind=$btn.data('kind')||ctx.kind||'episodes', page=parseInt($btn.attr('data-page')||1,10), $grid=$btn.closest('.aipex-load-wrap').prev('.aipex-card-grid');
     var label = $btn.data('label') || $.trim($btn.text()) || 'Load More';
+    var action = ctx.relationship ? 'aipex_relationship_grid_load_more' : 'aipex_grid_load_more';
     $btn.data('label', label).prop('disabled',true).text('Loading...');
-    $.post(AipexPodcast.ajaxurl,{action:'aipex_grid_load_more',nonce:AipexPodcast.nonce,page:page,kind:kind,context:JSON.stringify(ctx)},function(resp){
+    $.post(AipexPodcast.ajaxurl,{action:action,nonce:AipexPodcast.nonce,page:page,kind:kind,context:JSON.stringify(ctx)},function(resp){
       if(resp && resp.success && resp.data && resp.data.html){ $grid.append(resp.data.html); $btn.attr('data-page',resp.data.page); }
       if(!resp || !resp.success || !resp.data || !resp.data.has_more){ $btn.closest('.aipex-load-wrap').remove(); return; }
       $btn.prop('disabled',false).html('<span class="aipex-btn-icon">＋</span> '+label);

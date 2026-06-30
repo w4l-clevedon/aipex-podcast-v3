@@ -10,7 +10,8 @@ class Aipex_Podcast_Shortcodes {
             'aipex_series_grid','aipex_presenter_grid','aipex_presenters','aipex_guest_grid','aipex_guests','aipex_guest',
             'aipex_series_details','aipex_series_main_points','aipex_series_episode_summaries',
             'aipex_presenter_about','aipex_presenter_box','aipex_presenter_links','aipex_subscribe','aipex_next_previous',
-            'aipex_sponsors','aipex_sponsor','aipex_sponsor_grid','aipex_show_summary','aipex_show_main_topics','aipex_episode_series'
+            'aipex_sponsors','aipex_sponsor','aipex_sponsor_grid','aipex_show_summary','aipex_show_main_topics','aipex_episode_series',
+            'aipex_relationship_grid'
         ];
         foreach ($shortcodes as $sc) add_shortcode($sc, [__CLASS__, $sc]);
     }
@@ -169,7 +170,20 @@ class Aipex_Podcast_Shortcodes {
     public static function aipex_presenter_about(){ $v=Aipex_Podcast_Fields::field('presenter_about'); if(!$v) $v=get_the_content(); return $v?'<div class="aipex-presenter-about">'.wp_kses_post(wpautop($v)).'</div>':''; }
     public static function aipex_presenter_box(){ $name=get_the_title(); return '<div class="aipex-presenter-box">'.get_the_post_thumbnail(get_the_ID(),'medium').'<h3>'.esc_html($name).'</h3>'.Aipex_Podcast_Fields::button(get_permalink(),'Learn More About '.$name).'</div>'; }
 
-    public static function link_icons($id=null){ $id=$id?:get_the_ID(); $map=['website'=>'🌐 Website','rss_url'=>'RSS','spotify_url'=>'Spotify','apple_url'=>'Apple','youtube_url'=>'YouTube','amazon_url'=>'Amazon','pocketcasts_url'=>'Pocket Casts','facebook'=>'Facebook','instagram'=>'Instagram','linkedin'=>'LinkedIn']; $out=''; foreach($map as $k=>$label){$u=Aipex_Podcast_Fields::field($k,$id); if($u)$out.='<a class="aipex-icon-link" href="'.esc_url($u).'" target="_blank" rel="noopener">'.esc_html($label).'</a>'; } return $out?'<div class="aipex-icon-links">'.$out.'</div>':''; }
+    public static function link_icons($id=null){
+        $id=$id?:get_the_ID();
+        $map=['website'=>'🌐 Website','rss_url'=>'RSS','spotify_url'=>'Spotify','apple_url'=>'Apple','youtube_url'=>'YouTube','amazon_url'=>'Amazon','pocketcasts_url'=>'Pocket Casts','facebook'=>'Facebook','instagram'=>'Instagram','linkedin'=>'LinkedIn'];
+        $out='';
+        foreach($map as $k=>$label){ $u=Aipex_Podcast_Fields::field($k,$id); if($u)$out.='<a class="aipex-icon-link" href="'.esc_url($u).'" target="_blank" rel="noopener">'.esc_html($label).'</a>'; }
+        // Contact email/phone were captured by ACF but never rendered anywhere
+        // on the front end — these aren't web URLs, so they need mailto:/tel:
+        // hrefs rather than esc_url() against a plain address/number.
+        $email = Aipex_Podcast_Fields::field('contact_email',$id);
+        if ($email) $out .= '<a class="aipex-icon-link" href="mailto:'.esc_attr($email).'">✉ Email</a>';
+        $phone = Aipex_Podcast_Fields::field('contact_number',$id);
+        if ($phone) $out .= '<a class="aipex-icon-link" href="tel:'.esc_attr(preg_replace('/[^0-9+]/','',$phone)).'">📞 '.esc_html($phone).'</a>';
+        return $out?'<div class="aipex-icon-links">'.$out.'</div>':'';
+    }
     public static function aipex_presenter_links(){ return self::link_icons(); }
     public static function aipex_subscribe(){ $out=self::link_icons(); if(!$out && is_singular('aipex_series')) $out='<div class="aipex-icon-links"><a class="aipex-icon-link" href="'.esc_url(get_post_type_archive_link('aipex_podcast')).'feed/">RSS</a></div>'; return $out; }
     public static function aipex_next_previous(){ $type=get_post_type(); $prev=get_previous_post(); $next=get_next_post(); $out='<nav class="aipex-prev-next">'; if($prev&&$prev->post_type===$type)$out.='<a href="'.esc_url(get_permalink($prev)).'">← '.esc_html(get_the_title($prev)).'</a>'; if($next&&$next->post_type===$type)$out.='<a href="'.esc_url(get_permalink($next)).'">'.esc_html(get_the_title($next)).' →</a>'; return $out.'</nav>'; }
@@ -220,6 +234,89 @@ class Aipex_Podcast_Shortcodes {
         self::enqueue(); $a=shortcode_atts(['limit'=>12],$atts);
         $q=new WP_Query(['post_type'=>'aipex_sponsor','posts_per_page'=>(int)$a['limit'],'post_status'=>'publish','orderby'=>'title','order'=>'ASC']);
         $out='<div class="aipex-card-grid aipex-sponsor-grid">'; while($q->have_posts()){ $q->the_post(); $out.=self::sponsor_card(get_the_ID()); } wp_reset_postdata(); return $out.'</div>';
+    }
+
+    /**
+     * Maps a relationship attribute value to the Aipex_Podcast_Relationships
+     * target-type constant. Single place this mapping lives.
+     */
+    private static function relationship_target_type($relationship){
+        $map = [
+            'episodes' => Aipex_Podcast_Relationships::TYPE_EPISODE,
+            'shows' => Aipex_Podcast_Relationships::TYPE_SHOW,
+            'hosts' => Aipex_Podcast_Relationships::TYPE_HOST,
+            'guests' => Aipex_Podcast_Relationships::TYPE_GUEST,
+            'sponsors' => Aipex_Podcast_Relationships::TYPE_SPONSOR,
+        ];
+        return $map[$relationship] ?? '';
+    }
+
+    /** Single place that decides which card markup an entity type gets. */
+    public static function render_entity_card($target_type, $id){
+        switch ($target_type) {
+            case Aipex_Podcast_Relationships::TYPE_SHOW: return self::profile_card($id, 'show');
+            case Aipex_Podcast_Relationships::TYPE_HOST: return self::profile_card($id, 'presenter');
+            case Aipex_Podcast_Relationships::TYPE_GUEST: return self::profile_card($id, 'guest');
+            case Aipex_Podcast_Relationships::TYPE_SPONSOR: return self::sponsor_card($id);
+            case Aipex_Podcast_Relationships::TYPE_EPISODE:
+            default: return self::episode_card($id);
+        }
+    }
+
+    /**
+     * Generic relationship grid — one shortcode/widget covering every
+     * entity-to-entity pairing instead of a separate shortcode per pairing.
+     * Covers pairings no dedicated shortcode ever existed for (e.g. a
+     * host's shows, a sponsor's guests) since those are now just another
+     * "relationship" value on the same widget.
+     *
+     *   [aipex_relationship_grid relationship="shows"]
+     *     — on a presenter page: that presenter's shows
+     *   [aipex_relationship_grid relationship="guests" entity_id="42"]
+     *     — guests linked to entity #42 (any entity type)
+     */
+    public static function aipex_relationship_grid($atts=[]){
+        $a = shortcode_atts(['relationship'=>'episodes','entity_id'=>0,'entity_type'=>'','limit'=>12,'page'=>1], $atts);
+        self::enqueue();
+        $entity_id = (int)$a['entity_id'] ?: get_the_ID();
+        $entity_type = sanitize_key($a['entity_type']) ?: Aipex_Podcast_Relationships::entity_type_for_post_type(get_post_type($entity_id));
+        $target_type = self::relationship_target_type(sanitize_key($a['relationship']));
+        if (!$entity_id || !$entity_type || !$target_type) return '';
+
+        $ids = Aipex_Podcast_Relationships::related($entity_type, $entity_id, $target_type);
+        if (!$ids) return '';
+
+        $limit = max(1, (int)$a['limit']);
+        $page = max(1, (int)$a['page']);
+        $slice = array_slice($ids, ($page - 1) * $limit, $limit);
+
+        $context = ['relationship'=>sanitize_key($a['relationship']),'entity_type'=>$entity_type,'entity_id'=>$entity_id,'limit'=>$limit];
+        $out = '<div class="aipex-card-grid aipex-relationship-grid aipex-'.esc_attr(sanitize_key($a['relationship'])).'-grid" data-context="'.esc_attr(wp_json_encode($context)).'">';
+        foreach ($slice as $id) $out .= self::render_entity_card($target_type, $id);
+        $out .= '</div>';
+        if (count($ids) > $page * $limit) $out .= self::load_more_button('relationship', $context, 'Load More');
+        return $out;
+    }
+
+    public static function ajax_relationship_grid_load_more(){
+        check_ajax_referer('aipex_podcast','nonce');
+        $context = json_decode(stripslashes($_POST['context'] ?? '{}'), true);
+        if (!is_array($context)) $context = [];
+        $page = max(1, (int)($_POST['page'] ?? 1)) + 1;
+        $relationship = sanitize_key($context['relationship'] ?? 'episodes');
+        $entity_type = sanitize_key($context['entity_type'] ?? '');
+        $entity_id = (int)($context['entity_id'] ?? 0);
+        $limit = max(1, min(48, (int)($context['limit'] ?? 12)));
+        $target_type = self::relationship_target_type($relationship);
+
+        $html = ''; $has_more = false;
+        if ($target_type && $entity_type && $entity_id) {
+            $ids = Aipex_Podcast_Relationships::related($entity_type, $entity_id, $target_type);
+            $slice = array_slice($ids, ($page - 1) * $limit, $limit);
+            foreach ($slice as $id) $html .= self::render_entity_card($target_type, $id);
+            $has_more = count($ids) > $page * $limit;
+        }
+        wp_send_json_success(['html'=>$html,'page'=>$page,'has_more'=>$has_more]);
     }
 
     public static function ajax_grid_load_more(){
