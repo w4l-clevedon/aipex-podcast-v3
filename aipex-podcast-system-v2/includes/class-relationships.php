@@ -183,6 +183,8 @@ class Aipex_Podcast_Relationships {
     /**
      * One-time backfill: rebuilds the whole table from existing ACF data.
      * Safe to run repeatedly (sync_post() is idempotent per post).
+     * Only suitable for small catalogues — use migrate_batch() for anything
+     * over a few hundred posts, since this runs in a single PHP execution.
      */
     public static function migrate_all(){
         self::maybe_create_table();
@@ -192,5 +194,48 @@ class Aipex_Podcast_Relationships {
             foreach ($ids as $id) { self::sync_post($id); $count++; }
         }
         return $count;
+    }
+
+    /**
+     * Batched AJAX sync — processes $batch_size posts per call, resuming
+     * from the stored offset on each subsequent call. Built for 1,000+ post
+     * catalogues where migrate_all() would time out in a single request.
+     *
+     * State is stored in a transient so it survives across requests.
+     * Returns an array the AJAX handler passes straight to wp_send_json_success().
+     */
+    public static function migrate_batch($batch_size=50, $reset=false){
+        self::maybe_create_table();
+        $state_key = 'aipex_rel_sync_state';
+
+        if ($reset || !($state = get_transient($state_key)) || !is_array($state)) {
+            // Build the full ordered list of IDs once and store it
+            $all = [];
+            foreach (['aipex_podcast', 'aipex_series'] as $pt) {
+                $ids = get_posts(['post_type'=>$pt,'post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids','orderby'=>'ID','order'=>'ASC']);
+                $all = array_merge($all, $ids);
+            }
+            $state = ['total'=>count($all),'offset'=>0,'done'=>0,'all'=>$all];
+        }
+
+        $slice = array_slice($state['all'], $state['offset'], $batch_size);
+        foreach ($slice as $id) self::sync_post($id);
+
+        $state['done'] += count($slice);
+        $state['offset'] += $batch_size;
+        $finished = $state['offset'] >= $state['total'];
+
+        if ($finished) {
+            delete_transient($state_key);
+        } else {
+            set_transient($state_key, $state, HOUR_IN_SECONDS);
+        }
+
+        return [
+            'done'     => $state['done'],
+            'total'    => $state['total'],
+            'finished' => $finished,
+            'pct'      => $state['total'] > 0 ? min(100, (int)round(100 * $state['done'] / $state['total'])) : 100,
+        ];
     }
 }

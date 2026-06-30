@@ -23,6 +23,8 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_migrate_relationships']);
+        add_action('wp_ajax_aipex_rel_sync_start', ['Aipex_Podcast_Core','ajax_rel_sync_start']);
+        add_action('wp_ajax_aipex_rel_sync_batch', ['Aipex_Podcast_Core','ajax_rel_sync_batch']);
         add_action('init', ['Aipex_Podcast_Core','register_legacy_redirect'], 7);
         Aipex_Podcast_Elementor::init();
     }
@@ -75,6 +77,18 @@ class Aipex_Podcast_Core {
             Aipex_Podcast_Relationships::migrate_all();
             update_option($key, AIPEX_PODCAST_VERSION, false);
         }
+    }
+
+    public static function ajax_rel_sync_start(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_rel_sync','nonce');
+        wp_send_json_success(Aipex_Podcast_Relationships::migrate_batch(50, true));
+    }
+
+    public static function ajax_rel_sync_batch(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_rel_sync','nonce');
+        wp_send_json_success(Aipex_Podcast_Relationships::migrate_batch(50, false));
     }
     public static function assets(){
         wp_register_style('aipex-podcast', AIPEX_PODCAST_URL.'assets/podcast.css', [], AIPEX_PODCAST_VERSION);

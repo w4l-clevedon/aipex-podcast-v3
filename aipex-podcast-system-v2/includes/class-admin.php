@@ -20,7 +20,6 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
         if(isset($_POST['aipex_remove_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::remove_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id'))); self::notice($msg); }
-        if(isset($_POST['aipex_rebuild_relationships'])){ check_admin_referer('aipex_tools'); $n=Aipex_Podcast_Relationships::migrate_all(); self::notice('Relationship index rebuilt from '.$n.' episodes/shows.'); }
     }
     public static function notice($msg){ set_transient('aipex_admin_notice', $msg, 60); }
     public static function show_notice(){ if($m=get_transient('aipex_admin_notice')){ echo '<div class="notice notice-success"><p>'.esc_html($m).'</p></div>'; delete_transient('aipex_admin_notice'); } }
@@ -118,7 +117,9 @@ class Aipex_Podcast_Admin {
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
-        echo '<h2>Relationship Index</h2><p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Runs automatically after a plugin update, but you can force it here if something looks out of sync.</p><p><button class="button" name="aipex_rebuild_relationships" value="1">Rebuild Relationship Index</button></p>';
+        echo '<h2>Relationship Index</h2>';
+        echo '<p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Processes 50 posts per AJAX batch so it won\'t time out on a large catalogue. Safe to run at any time — no posts are modified.</p>';
+        self::render_rel_sync_ui();
         echo '<h2>Default Show Sponsor</h2><p>Set WRS or another sponsor as the default sponsor for all shows/series.</p>';
         echo '<p><label>Sponsor ID <input type="number" name="default_sponsor_id" value="'.esc_attr(Aipex_Podcast_Settings::get('default_sponsor_id')).'" min="0" style="width:120px"></label> <span class="description">Set the site default on the Settings page.</span></p>';
         echo '<p><label><input type="checkbox" name="replace_existing_sponsors" value="1"> Replace existing show sponsors instead of only filling blanks</label></p>';
@@ -339,6 +340,44 @@ class Aipex_Podcast_Admin {
             }
         }
         return 'Removed sponsor '.$sponsor_id.' from '.$updated.' shows.';
+    }
+    public static function render_rel_sync_ui(){
+        $nonce = wp_create_nonce('aipex_rel_sync');
+        ?>
+        <div id="aipex-rel-sync-wrap" style="margin-top:12px;max-width:700px">
+            <p>
+                <button type="button" class="button button-primary" id="aipex-rel-sync-start">Start Relationship Sync</button>
+                <button type="button" class="button" id="aipex-rel-sync-stop" style="display:none">Stop</button>
+                <span id="aipex-rel-sync-status" style="margin-left:12px;color:#646970"></span>
+            </p>
+            <div style="height:16px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:8px">
+                <div id="aipex-rel-sync-bar" style="height:16px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s ease"></div>
+            </div>
+            <pre id="aipex-rel-sync-log" style="background:#f6f7f7;padding:10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+        </div>
+        <script>
+        jQuery(function($){
+            var running=false, nonce=<?php echo wp_json_encode($nonce); ?>;
+            var $start=$('#aipex-rel-sync-start'),$stop=$('#aipex-rel-sync-stop');
+            var $bar=$('#aipex-rel-sync-bar'),$status=$('#aipex-rel-sync-status'),$log=$('#aipex-rel-sync-log');
+            function log(msg){ $log.text($log.text()?$log.text()+'\n'+msg:msg); $log.scrollTop($log[0].scrollHeight); }
+            function step(action){
+                if(!running) return;
+                $.post(ajaxurl,{action:action,nonce:nonce},function(resp){
+                    if(!resp||!resp.success){ running=false; $start.prop('disabled',false); $stop.hide(); log('ERROR: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Unknown error')); return; }
+                    var d=resp.data;
+                    $bar.css('width',d.pct+'%');
+                    $status.text('Synced '+d.done+' of '+d.total+' ('+d.pct+'%)');
+                    log('Batch done — '+d.done+'/'+d.total+' synced');
+                    if(d.finished){ running=false; $start.prop('disabled',false); $stop.hide(); $bar.css('width','100%'); $status.text('Complete. '+d.total+' posts synced. Refresh the page to confirm.'); log('Finished.'); }
+                    else setTimeout(function(){ step('aipex_rel_sync_batch'); },200);
+                }).fail(function(xhr){ running=false; $start.prop('disabled',false); $stop.hide(); log('AJAX failed: HTTP '+xhr.status); });
+            }
+            $start.on('click',function(){ running=true; $log.text(''); $bar.css('width','0%'); $status.text('Starting…'); $start.prop('disabled',true); $stop.show(); step('aipex_rel_sync_start'); });
+            $stop.on('click',function(){ running=false; $start.prop('disabled',false); $stop.hide(); $status.text('Stopped.'); log('Stopped by user — click Start to resume from the beginning.'); });
+        });
+        </script>
+        <?php
     }
     public static function render_duplicates(){
         $groups=get_option(self::DUPLICATE_OPTION,[]); if(!$groups) return;
