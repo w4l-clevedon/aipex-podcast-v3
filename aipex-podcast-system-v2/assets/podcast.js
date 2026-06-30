@@ -59,3 +59,50 @@ jQuery(function($){
     }).fail(function(){ $btn.prop('disabled',false).html('<span class="aipex-btn-icon">＋</span> '+label); });
   });
 });
+
+  // Search
+  var searchTimer;
+  $(document).on('input','.aipex-search-input',function(){
+    clearTimeout(searchTimer);
+    var $wrap=$(this).closest('.aipex-search-wrap'), term=$(this).val(), limit=$wrap.data('limit')||10;
+    var $results=$wrap.find('.aipex-search-results');
+    if(term.length<2){ $results.html(''); return; }
+    $results.html('<p class="aipex-searching">Searching…</p>');
+    searchTimer=setTimeout(function(){
+      $.post(AipexPodcast.ajaxurl,{action:'aipex_search',nonce:AipexPodcast.nonce,term:term,limit:limit},function(resp){
+        if(resp&&resp.success) $results.html(resp.data.html||'<p class="aipex-no-results">No episodes found.</p>');
+        else $results.html('<p class="aipex-no-results">Search unavailable.</p>');
+      }).fail(function(){ $results.html('<p class="aipex-no-results">Search unavailable.</p>'); });
+    },320);
+  });
+
+  // Filters — update nearest episode grid using relationship grid AJAX
+  $(document).on('click','.aipex-filter-btn',function(){
+    var $btn=$(this), $group=$btn.closest('.aipex-filter-buttons');
+    $group.find('.aipex-filter-btn').removeClass('is-active');
+    $btn.addClass('is-active');
+    var entity_type=$group.data('entity-type'), entity_id=parseInt($btn.data('id')||0,10);
+    var $grid=$btn.closest('.aipex-filters').nextAll('.aipex-card-grid').first();
+    if(!$grid.length) $grid=$('.aipex-card-grid').first();
+    $grid.css('opacity','0.5');
+    var relationship='episodes', limit=12;
+    var ctx={relationship:relationship,entity_type:entity_type,entity_id:entity_id,limit:limit};
+    if(entity_id===0){
+      // No filter — load latest episodes
+      $.post(AipexPodcast.ajaxurl,{action:'aipex_grid_load_more',nonce:AipexPodcast.nonce,page:0,kind:'episodes',context:JSON.stringify({kind:'episodes',limit:limit})},function(resp){
+        if(resp&&resp.success&&resp.data.html) $grid.html(resp.data.html);
+        $grid.css('opacity','1');
+      });
+    } else {
+      $.post(AipexPodcast.ajaxurl,{action:'aipex_relationship_grid_load_more',nonce:AipexPodcast.nonce,page:0,context:JSON.stringify(ctx)},function(resp){
+        if(resp&&resp.success&&resp.data.html) $grid.html(resp.data.html);
+        $grid.css('opacity','1');
+      }).fail(function(){ $grid.css('opacity','1'); });
+    }
+  });
+
+  $(document).on('change','.aipex-filter-select',function(){
+    var $sel=$(this), entity_type=$sel.data('entity-type'), entity_id=parseInt($sel.val()||0,10);
+    $sel.trigger('blur');
+    $sel.closest('.aipex-filters').find('.aipex-filter-btn[data-id="'+entity_id+'"]').trigger('click');
+  });

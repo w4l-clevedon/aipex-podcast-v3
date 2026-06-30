@@ -17,6 +17,8 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_nopriv_aipex_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_grid_load_more']);
         add_action('wp_ajax_aipex_relationship_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_relationship_grid_load_more']);
         add_action('wp_ajax_nopriv_aipex_relationship_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_relationship_grid_load_more']);
+        add_action('wp_ajax_aipex_search', ['Aipex_Podcast_Shortcodes','ajax_search']);
+        add_action('wp_ajax_nopriv_aipex_search', ['Aipex_Podcast_Shortcodes','ajax_search']);
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);

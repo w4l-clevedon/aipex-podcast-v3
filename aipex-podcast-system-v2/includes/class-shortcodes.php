@@ -11,7 +11,9 @@ class Aipex_Podcast_Shortcodes {
             'aipex_series_details','aipex_series_main_points','aipex_series_episode_summaries',
             'aipex_presenter_about','aipex_presenter_box','aipex_presenter_links','aipex_subscribe','aipex_next_previous',
             'aipex_sponsors','aipex_sponsor','aipex_sponsor_grid','aipex_show_summary','aipex_show_main_topics','aipex_episode_series',
-            'aipex_relationship_grid'
+            'aipex_relationship_grid',
+            // Phase 3.5 — new proper shortcodes (each has a matching Elementor widget with real controls)
+            'aipex_breadcrumbs','aipex_episode_meta','aipex_search','aipex_episode_filters',
         ];
         foreach ($shortcodes as $sc) add_shortcode($sc, [__CLASS__, $sc]);
     }
@@ -341,5 +343,147 @@ class Aipex_Podcast_Shortcodes {
             wp_reset_postdata();
         }
         wp_send_json_success(['html'=>$html,'page'=>$page,'has_more'=>$has_more]);
+    }
+
+    // -------------------------------------------------------------------------
+    // New Phase 3.5 shortcodes — each has a matching Elementor widget with real
+    // controls; shortcodes exist so they also work in the classic editor.
+    // -------------------------------------------------------------------------
+
+    /**
+     * [aipex_breadcrumbs separator="›" show_archive="1"]
+     * Builds a breadcrumb trail based on the current entity type:
+     *   Home → Shows → Show Name (on a series page)
+     *   Home → Shows → Show Name → Episode Title (on a podcast page)
+     *   Home → Presenters → Presenter Name (on a presenter page)
+     *   Home → Guests / Sponsors (on those pages)
+     */
+    public static function aipex_breadcrumbs($atts=[]){
+        $a = shortcode_atts(['separator'=>'›','show_archive'=>1], $atts);
+        $sep = '<span class="aipex-crumb-sep" aria-hidden="true">'.esc_html($a['separator']).'</span>';
+        $show_archive = (bool)(int)$a['show_archive'];
+        $post_type = get_post_type();
+        $crumbs = [];
+        $crumbs[] = '<a href="'.esc_url(home_url('/')).'">Home</a>';
+        switch ($post_type) {
+            case 'aipex_podcast':
+                if ($show_archive && ($arc = get_post_type_archive_link('aipex_podcast')))
+                    $crumbs[] = '<a href="'.esc_url($arc).'">Episodes</a>';
+                $series_ids = Aipex_Podcast_Relationships::shows_for(Aipex_Podcast_Relationships::TYPE_EPISODE, get_the_ID());
+                if ($series_ids) $crumbs[] = '<a href="'.esc_url(get_permalink($series_ids[0])).'">'.esc_html(get_the_title($series_ids[0])).'</a>';
+                $crumbs[] = '<span aria-current="page">'.esc_html(get_the_title()).'</span>';
+                break;
+            case 'aipex_series':
+                if ($show_archive && ($arc = get_post_type_archive_link('aipex_series')))
+                    $crumbs[] = '<a href="'.esc_url($arc).'">Shows</a>';
+                $crumbs[] = '<span aria-current="page">'.esc_html(get_the_title()).'</span>';
+                break;
+            case 'aipex_presenter':
+                if ($show_archive && ($arc = get_post_type_archive_link('aipex_presenter')))
+                    $crumbs[] = '<a href="'.esc_url($arc).'">Presenters</a>';
+                $crumbs[] = '<span aria-current="page">'.esc_html(get_the_title()).'</span>';
+                break;
+            case 'aipex_guest':
+                if ($show_archive && ($arc = get_post_type_archive_link('aipex_guest')))
+                    $crumbs[] = '<a href="'.esc_url($arc).'">Guests</a>';
+                $crumbs[] = '<span aria-current="page">'.esc_html(get_the_title()).'</span>';
+                break;
+            case 'aipex_sponsor':
+                if ($show_archive && ($arc = get_post_type_archive_link('aipex_sponsor')))
+                    $crumbs[] = '<a href="'.esc_url($arc).'">Sponsors</a>';
+                $crumbs[] = '<span aria-current="page">'.esc_html(get_the_title()).'</span>';
+                break;
+            default:
+                return '';
+        }
+        return '<nav class="aipex-breadcrumbs" aria-label="Breadcrumb">'.implode($sep, $crumbs).'</nav>';
+    }
+
+    /**
+     * [aipex_episode_meta show_date="1" show_duration="1" show_number="1" show_series="1"]
+     * Compact metadata bar for the current episode.
+     */
+    public static function aipex_episode_meta($atts=[]){
+        $a = shortcode_atts(['show_date'=>1,'show_duration'=>1,'show_number'=>1,'show_series'=>1], $atts);
+        $id = get_the_ID();
+        if (get_post_type($id) !== 'aipex_podcast') return '';
+        $parts = [];
+        if ((int)$a['show_number'] && $n = Aipex_Podcast_Fields::field('episode_number',$id))
+            $parts[] = '<span class="aipex-meta-ep">Ep '.esc_html($n).'</span>';
+        if ((int)$a['show_date'])
+            $parts[] = '<span class="aipex-meta-date">'.esc_html(get_the_date('j F Y', $id)).'</span>';
+        if ((int)$a['show_duration'] && $d = Aipex_Podcast_Fields::field('duration',$id))
+            $parts[] = '<span class="aipex-meta-duration">'.esc_html($d).'</span>';
+        if ((int)$a['show_series']) {
+            $series_ids = Aipex_Podcast_Relationships::shows_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $id);
+            foreach ($series_ids as $sid)
+                $parts[] = '<a class="aipex-meta-series" href="'.esc_url(get_permalink($sid)).'">'.esc_html(get_the_title($sid)).'</a>';
+        }
+        return $parts ? '<div class="aipex-episode-meta">'.implode('<span class="aipex-meta-sep">·</span>', $parts).'</div>' : '';
+    }
+
+    /**
+     * [aipex_search placeholder="Search episodes…" limit="10"]
+     * AJAX episode search. Results render below the input as episode cards.
+     */
+    public static function aipex_search($atts=[]){
+        $a = shortcode_atts(['placeholder'=>'Search episodes…','limit'=>10], $atts);
+        self::enqueue();
+        $limit = max(1, min(48, (int)$a['limit']));
+        return '<div class="aipex-search-wrap" data-limit="'.esc_attr($limit).'">'
+            .'<input type="search" class="aipex-search-input" placeholder="'.esc_attr($a['placeholder']).'" autocomplete="off" aria-label="'.esc_attr($a['placeholder']).'">'
+            .'<div class="aipex-search-results" aria-live="polite"></div>'
+            .'</div>';
+    }
+
+    /**
+     * [aipex_episode_filters filter_by="shows" style="buttons"]
+     * Renders filter UI (buttons or dropdowns) that, when clicked, reloads
+     * the nearest .aipex-episode-grid on the page via AJAX using the
+     * relationship table. filter_by can be "shows", "presenters", or "both".
+     */
+    public static function aipex_episode_filters($atts=[]){
+        $a = shortcode_atts(['filter_by'=>'shows','style'=>'buttons'], $atts);
+        self::enqueue();
+        $filter_by = sanitize_key($a['filter_by']);
+        $style = sanitize_key($a['style']);
+        $types = ($filter_by === 'both') ? ['shows','presenters'] : [$filter_by];
+        $out = '<div class="aipex-filters" data-style="'.esc_attr($style).'">';
+        foreach ($types as $type) {
+            $post_type = $type === 'shows' ? 'aipex_series' : 'aipex_presenter';
+            $entity_type = $type === 'shows' ? Aipex_Podcast_Relationships::TYPE_SHOW : Aipex_Podcast_Relationships::TYPE_HOST;
+            $label = $type === 'shows' ? 'Show' : 'Presenter';
+            $items = get_posts(['post_type'=>$post_type,'posts_per_page'=>-1,'post_status'=>'publish','orderby'=>'title','order'=>'ASC','fields'=>'ids']);
+            if (!$items) continue;
+            if ($style === 'dropdown') {
+                $out .= '<select class="aipex-filter-select" data-entity-type="'.esc_attr($entity_type).'">';
+                $out .= '<option value="0">All '.$label.'s</option>';
+                foreach ($items as $id) $out .= '<option value="'.esc_attr($id).'">'.esc_html(get_the_title($id)).'</option>';
+                $out .= '</select>';
+            } else {
+                $out .= '<div class="aipex-filter-buttons" data-entity-type="'.esc_attr($entity_type).'">';
+                $out .= '<button class="aipex-filter-btn is-active" data-id="0">All '.$label.'s</button>';
+                foreach ($items as $id) $out .= '<button class="aipex-filter-btn" data-id="'.esc_attr($id).'">'.esc_html(get_the_title($id)).'</button>';
+                $out .= '</div>';
+            }
+        }
+        return $out.'</div>';
+    }
+
+    /**
+     * AJAX handler for [aipex_search]. Returns rendered episode cards matching
+     * the search term, reading from both post_title and episode_summary.
+     */
+    public static function ajax_search(){
+        check_ajax_referer('aipex_podcast','nonce');
+        $term = sanitize_text_field(wp_unslash($_POST['term'] ?? ''));
+        $limit = max(1, min(48, (int)($_POST['limit'] ?? 10)));
+        $html = '';
+        if (strlen($term) >= 2) {
+            $q = new WP_Query(['post_type'=>'aipex_podcast','post_status'=>'publish','posts_per_page'=>$limit,'s'=>$term,'orderby'=>'relevance']);
+            while ($q->have_posts()) { $q->the_post(); $html .= self::episode_card(get_the_ID()); }
+            wp_reset_postdata();
+        }
+        wp_send_json_success(['html'=>$html,'found'=>$html !== '']);
     }
 }
