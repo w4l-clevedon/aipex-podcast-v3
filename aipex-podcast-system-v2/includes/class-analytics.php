@@ -125,19 +125,24 @@ class Aipex_Podcast_Analytics {
         $cached = get_transient($cache_key);
         if ($cached !== false) return $cached;
 
+        // ip-api.com: free, server-side, HTTP-only on free tier.
+        // We suppress errors via a try/catch on json_decode and check the
+        // HTTP status code explicitly so WordPress's http.php doesn't emit
+        // an "Undefined array key message" warning on non-200 responses.
         $response = wp_remote_get(
             'http://ip-api.com/json/'.rawurlencode($anon_ip).'?fields=status,country,countryCode,city',
-            ['timeout'=>4,'user-agent'=>'Aipex Podcast Analytics']
+            ['timeout'=>5,'user-agent'=>'Aipex Podcast Analytics/1.0','reject_unsafe_urls'=>false]
         );
 
         $result = $empty;
-        if (!is_wp_error($response)) {
-            $body = json_decode(wp_remote_retrieve_body($response), true);
-            if (!empty($body['status']) && $body['status'] === 'success') {
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            if (is_array($data) && !empty($data['status']) && $data['status'] === 'success') {
                 $result = [
-                    'country_code' => sanitize_text_field($body['countryCode'] ?? ''),
-                    'country_name' => sanitize_text_field($body['country'] ?? ''),
-                    'city'         => sanitize_text_field($body['city'] ?? ''),
+                    'country_code' => sanitize_text_field($data['countryCode'] ?? ''),
+                    'country_name' => sanitize_text_field($data['country'] ?? ''),
+                    'city'         => sanitize_text_field($data['city'] ?? ''),
                 ];
             }
         }
@@ -259,9 +264,6 @@ class Aipex_Podcast_Analytics {
     // -------------------------------------------------------------------------
 
     public static function ajax_track_play(){
-        // Intentionally NOT using check_ajax_referer here — the nonce is still
-        // validated but we use a verify_nonce so we can fail silently rather
-        // than die() and interrupt playback state from the JS side.
         if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'aipex_podcast')) {
             wp_send_json_error(null, 403);
         }
@@ -270,5 +272,57 @@ class Aipex_Podcast_Analytics {
         $ua = sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'] ?? ''));
         self::record_play($episode_id, $ip, $ua);
         wp_send_json_success();
+    }
+
+    // -------------------------------------------------------------------------
+    // Play count — single-post query used by [aipex_play_count] shortcode
+    // -------------------------------------------------------------------------
+
+    public static function get_play_count($episode_id){
+        global $wpdb;
+        return (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM ".self::table()." WHERE episode_id=%d",
+            (int)$episode_id
+        ));
+    }
+
+    // -------------------------------------------------------------------------
+    // Likes — stored in postmeta (aipex_like_count). Per-user state is tracked
+    // client-side via a cookie so we don't need a user account or a new table.
+    // -------------------------------------------------------------------------
+
+    const LIKE_META_KEY = 'aipex_like_count';
+
+    public static function get_like_count($post_id){
+        return (int)get_post_meta((int)$post_id, self::LIKE_META_KEY, true);
+    }
+
+    public static function increment_like($post_id){
+        $post_id = (int)$post_id;
+        $count = self::get_like_count($post_id) + 1;
+        update_post_meta($post_id, self::LIKE_META_KEY, $count);
+        return $count;
+    }
+
+    public static function get_most_liked($post_type='aipex_podcast', $limit=10){
+        return get_posts([
+            'post_type'      => $post_type,
+            'post_status'    => 'publish',
+            'posts_per_page' => $limit,
+            'meta_key'       => self::LIKE_META_KEY,
+            'orderby'        => 'meta_value_num',
+            'order'          => 'DESC',
+            'meta_query'     => [['key'=>self::LIKE_META_KEY,'compare'=>'EXISTS']],
+        ]);
+    }
+
+    public static function ajax_like_post(){
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'aipex_podcast')) {
+            wp_send_json_error(null, 403);
+        }
+        $post_id = (int)($_POST['post_id'] ?? 0);
+        if (!$post_id || !get_post($post_id)) wp_send_json_error(['message'=>'Invalid post.']);
+        $count = self::increment_like($post_id);
+        wp_send_json_success(['count' => $count, 'post_id' => $post_id]);
     }
 }

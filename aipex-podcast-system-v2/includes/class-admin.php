@@ -26,6 +26,11 @@ class Aipex_Podcast_Admin {
     public static function notice($msg){ set_transient('aipex_admin_notice', $msg, 60); }
     public static function show_notice(){ if($m=get_transient('aipex_admin_notice')){ echo '<div class="notice notice-success"><p>'.esc_html($m).'</p></div>'; delete_transient('aipex_admin_notice'); } }
 
+    private static function published_count($post_type){
+        $counts = wp_count_posts($post_type);
+        return ($counts && isset($counts->publish)) ? (int)$counts->publish : 0;
+    }
+
     public static function dashboard(){
         self::show_notice();
         $entity_counts = [
@@ -146,6 +151,25 @@ class Aipex_Podcast_Admin {
                 echo '</tbody></table></div>';
             }
 
+            // ── Most Liked Episodes ──
+            $most_liked = Aipex_Podcast_Analytics::get_most_liked('aipex_podcast', 10);
+            if ($most_liked) {
+                $view_all_url = admin_url('edit.php?post_type=aipex_podcast&orderby=meta_value_num&meta_key=aipex_like_count&order=desc');
+                echo '<div style="'.$section_style.'">';
+                echo '<h3 style="margin-top:0;display:flex;align-items:center;justify-content:space-between">';
+                echo '<span>♥ Most Liked Episodes</span>';
+                echo '<a href="'.esc_url($view_all_url).'" class="button" style="font-size:12px">View All Episodes by Likes</a>';
+                echo '</h3>';
+                echo '<table class="widefat striped" style="font-size:13px"><thead><tr><th>Episode</th><th style="width:80px;text-align:right">Likes</th></tr></thead><tbody>';
+                foreach ($most_liked as $ep) {
+                    $likes = Aipex_Podcast_Analytics::get_like_count($ep->ID);
+                    echo '<tr><td><a href="'.esc_url(get_permalink($ep->ID)).'" target="_blank">'.esc_html($ep->post_title).'</a>'
+                        .' <a href="'.esc_url(get_edit_post_link($ep->ID)).'" style="color:#646970;font-size:11px">(edit)</a></td>';
+                    echo '<td style="text-align:right;color:var(--aipex-brand,#e4005a);font-weight:700">♥ '.esc_html(number_format($likes)).'</td></tr>';
+                }
+                echo '</tbody></table></div>';
+            }
+
             // ── Chart.js + Google Charts scripts ──
             $brand = sanitize_hex_color(Aipex_Podcast_Settings::get('brand_color')) ?: '#e4005a';
             $palette = ["'$brand'","'#f9a8d4'","'#fdba74'","'#86efac'","'#93c5fd'","'#c4b5fd'","'#fde68a'"];
@@ -194,6 +218,8 @@ class Aipex_Podcast_Admin {
             'Episode' => [
                 ['[aipex_podcast_player]', 'Audio player for the current episode.'],
                 ['[aipex_floating_player limit="12"]', 'Persistent floating player with an episode drawer. context="all" for unfiltered, or auto-detects series/presenter on those pages.'],
+                ['[aipex_play_count]', 'Number of times this episode has been played. Only shows once play data is recorded. Add id="123" to target a specific episode.'],
+                ['[aipex_like_button]', 'Heart button with live count. Works on any page (episode, show, presenter, guest, sponsor). One like per visitor, tracked via cookie. Add id="123" for a specific post or label="Like this" for custom text.'],
                 ['[aipex_podcast_summary]', "Current episode's summary."],
                 ['[aipex_podcast_main_points]', "Current episode's main points list."],
                 ['[aipex_podcast_transcript]', "Current episode's transcript."],

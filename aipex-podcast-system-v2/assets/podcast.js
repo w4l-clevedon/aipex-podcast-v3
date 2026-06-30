@@ -121,3 +121,33 @@ jQuery(function($){
     if(!episode_id || !AipexPodcast || !AipexPodcast.ajaxurl) return;
     $.post(AipexPodcast.ajaxurl,{action:'aipex_track_play',nonce:AipexPodcast.nonce,episode_id:episode_id});
   });
+
+  // Like button — one like per visitor per post, tracked via cookie
+  function getLikedIds(){
+    try{ return JSON.parse(decodeURIComponent(document.cookie.replace(/(?:(?:^|.*;)\s*aipex_likes\s*=\s*([^;]*).*$)|^.*$/,'$1')||'[]')); }
+    catch(e){ return []; }
+  }
+  function setLikedIds(ids){
+    var exp=new Date(); exp.setFullYear(exp.getFullYear()+1);
+    document.cookie='aipex_likes='+encodeURIComponent(JSON.stringify(ids))+';expires='+exp.toUTCString()+';path=/;SameSite=Lax';
+  }
+  function initLikeButtons(){
+    var liked=getLikedIds();
+    $('.aipex-like-btn').each(function(){
+      var id=parseInt($(this).data('post-id'));
+      if(liked.indexOf(id)!==-1) $(this).addClass('is-liked');
+    });
+  }
+  $(initLikeButtons);
+  $(document).on('click','.aipex-like-btn',function(){
+    var $btn=$(this), id=parseInt($btn.data('post-id'));
+    if($btn.hasClass('is-liked')) return; // already liked
+    $btn.prop('disabled',true);
+    $.post(AipexPodcast.ajaxurl,{action:'aipex_like_post',nonce:AipexPodcast.nonce,post_id:id},function(resp){
+      if(resp&&resp.success){
+        $btn.addClass('is-liked').find('.aipex-like-count').text(resp.data.count.toLocaleString());
+        var liked=getLikedIds(); liked.push(id); setLikedIds(liked);
+      }
+      $btn.prop('disabled',false);
+    }).fail(function(){ $btn.prop('disabled',false); });
+  });

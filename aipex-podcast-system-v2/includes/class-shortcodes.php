@@ -14,6 +14,8 @@ class Aipex_Podcast_Shortcodes {
             'aipex_relationship_grid',
             // Phase 3.5 — new proper shortcodes (each has a matching Elementor widget with real controls)
             'aipex_breadcrumbs','aipex_episode_meta','aipex_search','aipex_episode_filters',
+            // Phase 4
+            'aipex_play_count','aipex_like_button',
         ];
         foreach ($shortcodes as $sc) add_shortcode($sc, [__CLASS__, $sc]);
     }
@@ -485,5 +487,41 @@ class Aipex_Podcast_Shortcodes {
             wp_reset_postdata();
         }
         wp_send_json_success(['html'=>$html,'found'=>$html !== '']);
+    }
+
+    /**
+     * [aipex_play_count label="Plays" id="0"]
+     * Displays the number of times the current (or specified) episode has been
+     * played. Shows nothing if the analytics table has no data for this episode.
+     */
+    public static function aipex_play_count($atts=[]){
+        $a = shortcode_atts(['label'=>'Plays','id'=>0], $atts);
+        $id = (int)$a['id'] ?: get_the_ID();
+        if (!class_exists('Aipex_Podcast_Analytics')) return '';
+        $count = Aipex_Podcast_Analytics::get_play_count($id);
+        if (!$count) return '';
+        return '<span class="aipex-play-count">▶ '.esc_html(number_format($count)).' '.esc_html($a['label']).'</span>';
+    }
+
+    /**
+     * [aipex_like_button id="0" label="Like"]
+     * Renders a heart button with a live count. Works on any entity page
+     * (episode, show, presenter, guest, sponsor). Clicking it sends one like
+     * per visitor per post (enforced via a cookie) — the heart turns pink and
+     * the count updates without a page reload.
+     */
+    public static function aipex_like_button($atts=[]){
+        $a = shortcode_atts(['id'=>0,'label'=>''], $atts);
+        $id = (int)$a['id'] ?: get_the_ID();
+        if (!$id) return '';
+        self::enqueue();
+        if (!class_exists('Aipex_Podcast_Analytics')) return '';
+        $count = Aipex_Podcast_Analytics::get_like_count($id);
+        $label = $a['label'] ? esc_html($a['label']).' ' : '';
+        return '<button type="button" class="aipex-like-btn" data-post-id="'.esc_attr($id).'" aria-label="Like this page">'
+            .'<span class="aipex-like-heart">♥</span>'
+            .$label
+            .'<span class="aipex-like-count">'.esc_html($count > 0 ? number_format($count) : 0).'</span>'
+            .'</button>';
     }
 }
