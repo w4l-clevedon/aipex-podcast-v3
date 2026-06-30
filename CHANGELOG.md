@@ -1,4 +1,33 @@
-# Aipex Podcast System — v3.2.0
+# Aipex Podcast System — v3.3.0
+
+## v3.3.0 — Phase 3: admin cleanup + real dashboard
+
+- **Removed** the V1 → V2 Migration tool (`class-migration.php` and its
+  admin screen) — the v1→v2 migration this plugin's history refers to is
+  long done; this was dead weight in the admin menu.
+- **Removed** "Replace Bad Audio URLs With Dropbox Links" from Tools &
+  Scanners — same reasoning, a one-time recovery tool from an earlier
+  incident that's no longer relevant.
+- **Dashboard now shows real numbers**: published counts for Podcasts,
+  Shows, Hosts/Presenters, Guests, and Sponsors, replacing the "Modular
+  podcast CMS is active" placeholder.
+- **Shortcodes admin page reorganised** — grouped by category (Episode,
+  Episode grids, Show/Series, Presenter, Guest, Sponsor) with a one-line
+  description per shortcode, instead of one long undifferentiated list. A
+  "Recommended" section at the top leads with `aipex_relationship_grid`.
+  Also flagged explicitly: `aipex_latest_podcasts` is always unfiltered by
+  design — placing it on a show/presenter page (instead of
+  `aipex_show_podcasts`/`aipex_presenter_podcasts`) will show every
+  published episode site-wide rather than that page's own. This was the
+  root cause of the "series page doesn't show its own podcasts" report —
+  not a relationship-table bug, a content/widget-choice issue, but worth
+  making harder to fall into by accident.
+- **Play counts and live listener tracking scoped but not built** — see
+  `PHASE4-PLANNING.md` for the architecture, open questions, and a
+  recommendation to deprioritise "listeners online" relative to play
+  counts given the effort/value gap (continuous heartbeat traffic and
+  cache-bypass requirements for comparatively low value vs. a simple
+  play-count table).
 
 ## v3.2.0 — Phase 2: Entity API + generic Relationship Grid
 

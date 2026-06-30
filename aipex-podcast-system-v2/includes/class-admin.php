@@ -8,7 +8,6 @@ class Aipex_Podcast_Admin {
         add_submenu_page('edit.php?post_type=aipex_podcast','Podcast Dashboard','Dashboard','manage_options','aipex-podcast-dashboard',[__CLASS__,'dashboard']);
         add_submenu_page('edit.php?post_type=aipex_podcast','Shortcodes','Shortcodes','manage_options','aipex-podcast-shortcodes',[__CLASS__,'shortcodes']);
         add_submenu_page('edit.php?post_type=aipex_podcast','Dropbox Importer','Dropbox Importer','manage_options','aipex-podcast-dropbox',['Aipex_Podcast_Dropbox','page']);
-        add_submenu_page('edit.php?post_type=aipex_podcast','V1 to V2 Migration','V1 to V2 Migration','manage_options','aipex-podcast-migration',['Aipex_Podcast_Migration','page']);
         add_submenu_page('edit.php?post_type=aipex_podcast','Tools & Scanners','Tools & Scanners','manage_options','aipex-podcast-tools',[__CLASS__,'tools']);
     }
 
@@ -17,7 +16,6 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_sync_dates'])){ check_admin_referer('aipex_tools'); $msg=self::sync_dates_durations(); self::notice($msg); }
         if(isset($_POST['aipex_scan_txt'])){ check_admin_referer('aipex_tools'); $msg=self::scan_txt_content(); self::notice($msg); }
         if(isset($_POST['aipex_apply_txt_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_txt_review($_POST['txt_review']??[]); self::notice($msg); }
-        if(isset($_POST['aipex_replace_bad_audio'])){ check_admin_referer('aipex_tools'); $msg=self::replace_bad_audio_urls(); self::notice($msg); }
         if(isset($_POST['aipex_scan_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::scan_duplicates(); self::notice($msg); }
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
@@ -27,11 +25,90 @@ class Aipex_Podcast_Admin {
     public static function notice($msg){ set_transient('aipex_admin_notice', $msg, 60); }
     public static function show_notice(){ if($m=get_transient('aipex_admin_notice')){ echo '<div class="notice notice-success"><p>'.esc_html($m).'</p></div>'; delete_transient('aipex_admin_notice'); } }
 
-    public static function dashboard(){ echo '<div class="wrap"><h1>Aipex Podcast System v2</h1><p>Modular podcast CMS is active.</p></div>'; }
+    public static function dashboard(){
+        self::show_notice();
+        $counts = [
+            'Podcasts' => self::published_count('aipex_podcast'),
+            'Shows' => self::published_count('aipex_series'),
+            'Hosts / Presenters' => self::published_count('aipex_presenter'),
+            'Guests' => self::published_count('aipex_guest'),
+            'Sponsors' => self::published_count('aipex_sponsor'),
+        ];
+        echo '<div class="wrap"><h1>Aipex Podcast System</h1>';
+        echo '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px">';
+        foreach ($counts as $label => $count) {
+            echo '<div style="background:#fff;border:1px solid #ccd0d4;border-radius:6px;padding:18px 24px;min-width:150px">';
+            echo '<div style="font-size:28px;font-weight:700;line-height:1">'.esc_html($count).'</div>';
+            echo '<div style="color:#646970;margin-top:6px">'.esc_html($label).'</div>';
+            echo '</div>';
+        }
+        echo '</div>';
+        echo '<p style="margin-top:24px;color:#646970">Listen counts and live listener tracking are planned for a future release — see <strong>Tools &amp; Scanners</strong> for content tools, and <strong>Settings</strong> for site-wide configuration.</p>';
+        echo '</div>';
+    }
+
+    private static function published_count($post_type){
+        $counts = wp_count_posts($post_type);
+        return $counts && isset($counts->publish) ? (int)$counts->publish : 0;
+    }
 
     public static function shortcodes(){
-        $items=['[aipex_podcast_player]','[aipex_floating_player limit="12"]','[aipex_podcast_grid limit="12"]','[aipex_latest_podcasts]','[aipex_series_podcasts]','[aipex_show_podcasts]','[aipex_presenter_podcasts]','[aipex_podcast_summary]','[aipex_podcast_main_points]','[aipex_podcast_transcript]','[aipex_series_grid limit="12"]','[aipex_presenter_grid limit="12"]','[aipex_guest_grid limit="12"]','[aipex_guests]','[aipex_guest id="123"]','[aipex_series_details]','[aipex_series_main_points]','[aipex_series_episode_summaries]','[aipex_presenter_about]','[aipex_presenter_box]','[aipex_presenter_links]','[aipex_subscribe]','[aipex_sponsors]','[aipex_sponsor id="123"]','[aipex_sponsor_grid]','[aipex_show_summary]','[aipex_show_main_topics]','[aipex_episode_series]','[aipex_next_previous]'];
-        echo '<div class="wrap"><h1>Podcast Shortcodes</h1><table class="widefat striped"><tbody>'; foreach($items as $i) echo '<tr><td><code>'.esc_html($i).'</code></td><td><button class="button" onclick="navigator.clipboard.writeText(\''.esc_js($i).'\')">Copy</button></td></tr>'; echo '</tbody></table></div>';
+        $groups = [
+            'Recommended' => [
+                ['[aipex_relationship_grid relationship="episodes"]', 'One shortcode for every entity-to-entity grid. relationship can be episodes, shows, hosts, guests or sponsors; entity_id defaults to the current page. Covers pairings the dedicated shortcodes below don\'t, e.g. relationship="shows" on a host page, or relationship="guests" on a sponsor page.'],
+            ],
+            'Episode' => [
+                ['[aipex_podcast_player]', 'Audio player for the current episode.'],
+                ['[aipex_floating_player limit="12"]', 'Persistent floating player with an episode drawer. context="all" for unfiltered, or auto-detects series/presenter on those pages.'],
+                ['[aipex_podcast_summary]', "Current episode's summary."],
+                ['[aipex_podcast_main_points]', "Current episode's main points list."],
+                ['[aipex_podcast_transcript]', "Current episode's transcript."],
+                ['[aipex_next_previous]', 'Prev/next navigation within the current post type.'],
+            ],
+            'Episode grids' => [
+                ['[aipex_podcast_grid limit="12"]', 'Episode grid. Auto-filters to the current series/presenter context unless context="all".'],
+                ['[aipex_latest_podcasts]', 'Always unfiltered — every published episode, latest first. Use this only when you deliberately want a site-wide feed; on a show/presenter page use aipex_show_podcasts / aipex_presenter_podcasts instead, or it will show ALL episodes rather than that page\'s own.'],
+                ['[aipex_series_podcasts]', "Episode grid filtered to the current show/series page."],
+                ['[aipex_show_podcasts]', 'Alias of aipex_series_podcasts.'],
+                ['[aipex_presenter_podcasts]', 'Episode grid filtered to the current presenter page.'],
+            ],
+            'Show / Series' => [
+                ['[aipex_series_grid limit="12"]', 'Grid of all shows.'],
+                ['[aipex_series_details]', "Current show's overview."],
+                ['[aipex_show_summary]', 'Alias of aipex_series_details.'],
+                ['[aipex_series_main_points]', "Current show's main topics."],
+                ['[aipex_show_main_topics]', 'Alias of aipex_series_main_points.'],
+                ['[aipex_series_episode_summaries]', "Current show's per-episode summaries list."],
+                ['[aipex_episode_series]', 'Link back to the show an episode belongs to.'],
+            ],
+            'Presenter' => [
+                ['[aipex_presenter_grid limit="12"]', 'Grid of all presenters.'],
+                ['[aipex_presenter_about]', "Current presenter's bio."],
+                ['[aipex_presenter_box]', 'Compact presenter card with photo and link.'],
+                ['[aipex_presenter_links]', 'Social links plus contact email/phone, if set.'],
+                ['[aipex_subscribe]', 'Subscribe links (falls back to the podcast RSS feed on a show page with no links set).'],
+            ],
+            'Guest' => [
+                ['[aipex_guest_grid limit="12"]', 'Grid of all guests.'],
+                ['[aipex_guests]', 'Alias of aipex_guest_grid.'],
+                ['[aipex_guest id="123"]', 'A single guest card by ID (defaults to the current page).'],
+            ],
+            'Sponsor' => [
+                ['[aipex_sponsors]', "Current episode/show's sponsor cards."],
+                ['[aipex_sponsor id="123"]', 'A single sponsor card by ID (defaults to the current page).'],
+                ['[aipex_sponsor_grid]', 'Grid of all sponsors.'],
+            ],
+        ];
+        echo '<div class="wrap"><h1>Podcast Shortcodes</h1>';
+        echo '<p>Grouped by what they do. If you\'re placing something new, start with <strong>aipex_relationship_grid</strong> in Recommended — it covers the most ground with the fewest shortcodes to remember.</p>';
+        foreach ($groups as $group => $items) {
+            echo '<h2>'.esc_html($group).'</h2><table class="widefat striped" style="margin-bottom:24px"><tbody>';
+            foreach ($items as [$code, $desc]) {
+                echo '<tr><td style="width:320px"><code>'.esc_html($code).'</code></td><td>'.esc_html($desc).'</td><td style="width:90px"><button class="button" onclick="navigator.clipboard.writeText(\''.esc_js($code).'\')">Copy</button></td></tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</div>';
     }
 
     public static function tools(){
@@ -40,7 +117,6 @@ class Aipex_Podcast_Admin {
         echo '<form method="post">'; wp_nonce_field('aipex_tools');
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
-        echo '<h2>Bad Audio URL Replacement</h2><p>Replaces old/broken Google Storage MP3 URLs with matched Dropbox links from the latest Dropbox scan. Run <strong>Dropbox Importer → Start Batch Scan</strong> first.</p><p><button class="button button-primary" name="aipex_replace_bad_audio" value="1">Replace Bad Audio URLs With Dropbox Links</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
         echo '<h2>Relationship Index</h2><p>Rebuilds the episode/show/host/guest/sponsor relationship table from current ACF data. Runs automatically after a plugin update, but you can force it here if something looks out of sync.</p><p><button class="button" name="aipex_rebuild_relationships" value="1">Rebuild Relationship Index</button></p>';
         echo '<h2>Default Show Sponsor</h2><p>Set WRS or another sponsor as the default sponsor for all shows/series.</p>';
@@ -185,22 +261,6 @@ class Aipex_Podcast_Admin {
             $out[]=['episode'=>$episode_id,'episode_name'=>$name,'summary'=>$r['summary']??''];
         }
         return $out;
-    }
-
-    public static function replace_bad_audio_urls(){
-        $index=get_option('aipex_dropbox_mp3_index',[]); if(!is_array($index)||!$index) return 'No Dropbox MP3 index found. Run Podcasts → Dropbox Importer → Start Batch Scan first.';
-        $q=new WP_Query(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids']); $fixed=0; $review=0;
-        foreach($q->posts as $id){
-            $url=Aipex_Podcast_Fields::audio_url($id); $drop=Aipex_Podcast_Fields::field('dropbox_url',$id);
-            if($drop && stripos($drop,'wrs-audio.storage.googleapis.com')===false) continue;
-            if(!$url || stripos($url,'wrs-audio.storage.googleapis.com')===false) continue;
-            $base=basename(parse_url($url,PHP_URL_PATH)); $best=null; $score=0;
-            foreach($index as $item){ $s=max(Aipex_Podcast_Fields::match_score($base,$item['name']??''), Aipex_Podcast_Fields::match_score(get_the_title($id),$item['name']??'')); if($s>$score){$score=$s;$best=$item;} }
-            if($best && $score>=90){ $target=$best['url']??''; if(!$target && !empty($best['path']) && class_exists('Aipex_Podcast_Dropbox')){ $r=Aipex_Podcast_Dropbox::shared_url_result($best['path']); $target=$r['url']??''; }
-                if($target){ Aipex_Podcast_Dropbox::attach_dropbox_url($id,$target); $fixed++; } else $review++;
-            } else $review++;
-        }
-        return 'Bad audio URL replacement complete. Fixed: '.$fixed.'. Still needing review: '.$review.'.';
     }
 
     public static function scan_duplicates(){

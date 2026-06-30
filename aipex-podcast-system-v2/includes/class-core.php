@@ -12,7 +12,6 @@ class Aipex_Podcast_Core {
         add_action('admin_init', ['Aipex_Podcast_Settings','handle_save']);
         add_action('admin_init', ['Aipex_Podcast_Dropbox','handle_actions']);
         add_action('rest_api_init', ['Aipex_Podcast_Dropbox','register_rest_routes']);
-        add_action('admin_init', ['Aipex_Podcast_Migration','handle_actions']);
         add_action('wp_enqueue_scripts', ['Aipex_Podcast_Core','assets']);
         add_action('wp_ajax_aipex_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_grid_load_more']);
         add_action('wp_ajax_nopriv_aipex_grid_load_more', ['Aipex_Podcast_Shortcodes','ajax_grid_load_more']);
