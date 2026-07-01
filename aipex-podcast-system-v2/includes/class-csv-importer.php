@@ -144,7 +144,7 @@ class Aipex_Podcast_CSV_Importer {
 
         // soundcloud_url
         if (!empty($row['soundcloud_url']) && !Aipex_Podcast_Fields::get('soundcloud_url', $post_id)) {
-            update_post_meta($post_id, 'soundcloud_url', esc_url_raw($row['soundcloud_url']));
+            Aipex_Podcast_Fields::update('soundcloud_url', esc_url_raw($row['soundcloud_url']), $post_id);
             $applied[] = 'SC URL';
         }
 

@@ -58,21 +58,33 @@ class Aipex_Podcast_Fields {
     }
 
     public static function update($key, $value, $post_id){
-        $primary = $key;
+        // Map field names to their registered ACF field keys so that
+        // update_field() stores values in a way ACF recognises in its own
+        // admin UI. Passing just the field name works ONLY when ACF has the
+        // field registered in the DB (i.e. via the GUI); when fields are
+        // registered in code (as ours are), ACF can't look them up by name
+        // alone and silently falls back to raw postmeta — which means the
+        // value never appears in the ACF field widget on the edit screen.
+        $field_keys = [
+            'series'         => 'field_series',
+            'presenters'     => 'field_presenters',
+            'guests'         => 'field_guests',
+            'sponsors'       => 'field_sponsors',
+            'series_sponsors'=> 'field_series_sponsors',
+            'duration'       => 'field_duration',
+            'soundcloud_url' => 'field_soundcloud_url',
+            'dropbox_url'    => 'field_dropbox_url',
+            'episode_number' => 'field_episode_number',
+        ];
+
         $updated = false;
         if (function_exists('update_field')) {
-            $updated = update_field($primary, $value, $post_id);
+            $acf_key = $field_keys[$key] ?? $key;
+            $updated = update_field($acf_key, $value, $post_id);
         }
-        if (!$updated) $updated = update_post_meta($post_id, $primary, $value);
+        if (!$updated) $updated = update_post_meta($post_id, $key, $value);
 
-        // Relationship-bearing fields keep the join table in sync regardless
-        // of write path — admin edit screen (via acf/save_post, see
-        // class-core.php), the v1→v2 migration tool, or programmatic
-        // updates like the sponsor admin tools in class-admin.php. This is
-        // intentionally a full re-sync of the post rather than a single
-        // edge, since it's cheap (a handful of small DELETE/INSERTs) and
-        // guarantees correctness without every call site needing to know
-        // about the relationship layer.
+        // Sync relationship table for any write path
         if (class_exists('Aipex_Podcast_Relationships') && in_array($key, ['series','presenters','guests','sponsors','series_sponsors'], true)) {
             Aipex_Podcast_Relationships::sync_post($post_id);
         }
