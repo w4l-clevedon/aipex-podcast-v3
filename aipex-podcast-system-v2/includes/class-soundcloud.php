@@ -111,24 +111,76 @@ class Aipex_Podcast_Soundcloud {
         if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
         check_ajax_referer('aipex_sc_test','nonce');
 
-        $client_id = self::client_id();
-        $username  = self::username();
-        if (!$client_id) wp_send_json_error(['message'=>'No Client ID saved in Settings.']);
-        if (!$username)  wp_send_json_error(['message'=>'No Username saved in Settings.']);
+        $client_id     = self::client_id();
+        $client_secret = self::client_secret();
+        $username      = self::username();
+        $log           = [];
 
-        // Test OAuth token (if secret is set)
-        $token = self::get_access_token();
-        $auth_method = $token ? 'OAuth token' : 'client_id only (no client_secret set)';
+        if (!$client_id) wp_send_json_error(['message'=>'No Client ID saved. Go to Settings → SoundCloud.']);
+        if (!$username)  wp_send_json_error(['message'=>'No Username saved. Go to Settings → SoundCloud.']);
 
-        // Clear cached user ID to force fresh resolve
-        delete_transient('aipex_sc_user_id');
-        $user_id = self::resolve_user_id();
+        $log[] = 'Client ID: '.substr($client_id,0,6).'… ('.strlen($client_id).' chars)';
+        $log[] = 'Client Secret: '.($client_secret ? substr($client_secret,0,4).'… ('.strlen($client_secret).' chars)' : 'NOT SET — enter it in Settings → SoundCloud');
+        $log[] = 'Username: '.$username;
 
-        if (!$user_id) {
-            wp_send_json_error(['message'=>'Resolve failed. Auth method: '.$auth_method.'. Check credentials are correct in Settings.']);
+        // Test OAuth if secret is present
+        $token = null;
+        if ($client_secret) {
+            delete_transient('aipex_sc_access_token');
+            $oauth_resp = wp_remote_post('https://secure.soundcloud.com/oauth/token', [
+                'timeout' => 15,
+                'body'    => ['grant_type'=>'client_credentials','client_id'=>$client_id,'client_secret'=>$client_secret],
+                'user-agent' => 'Aipex Podcast System/1.0',
+            ]);
+            $oauth_code = is_wp_error($oauth_resp) ? 'WP_Error: '.$oauth_resp->get_error_message() : wp_remote_retrieve_response_code($oauth_resp);
+            $log[] = 'OAuth token request → HTTP '.$oauth_code;
+            if (!is_wp_error($oauth_resp) && $oauth_code === 200) {
+                $oauth_data = json_decode(wp_remote_retrieve_body($oauth_resp), true);
+                $token = $oauth_data['access_token'] ?? null;
+                $log[] = 'OAuth: '.($token ? 'token obtained ('.strlen($token).' chars)' : 'no access_token in response — body: '.substr(wp_remote_retrieve_body($oauth_resp),0,200));
+                if ($token) set_transient('aipex_sc_access_token', $token, 3540);
+            } else if (!is_wp_error($oauth_resp)) {
+                $log[] = 'OAuth body: '.substr(wp_remote_retrieve_body($oauth_resp),0,200);
+            }
         }
 
-        wp_send_json_success(['user_id'=>$user_id,'username'=>$username,'auth'=>$auth_method]);
+        // Test resolve — v2
+        delete_transient('aipex_sc_user_id');
+        $profile_url = 'https://soundcloud.com/'.rawurlencode($username);
+        $v2_url = 'https://api-v2.soundcloud.com/resolve?url='.rawurlencode($profile_url).'&client_id='.rawurlencode($client_id);
+        $headers = $token ? ['Authorization'=>'OAuth '.$token] : [];
+        $v2_resp = wp_remote_get($v2_url, ['timeout'=>15,'headers'=>$headers,'user-agent'=>'Aipex Podcast System/1.0']);
+        $v2_code = is_wp_error($v2_resp) ? 'WP_Error: '.$v2_resp->get_error_message() : wp_remote_retrieve_response_code($v2_resp);
+        $log[] = 'Resolve v2 → HTTP '.$v2_code;
+        $user_id = 0;
+        if (!is_wp_error($v2_resp) && $v2_code === 200) {
+            $v2_data = json_decode(wp_remote_retrieve_body($v2_resp), true);
+            $user_id = (int)($v2_data['id'] ?? 0);
+            $log[] = 'v2 user ID: '.($user_id ?: 'not found in response — body: '.substr(wp_remote_retrieve_body($v2_resp),0,200));
+        } else if (!is_wp_error($v2_resp)) {
+            $log[] = 'v2 body: '.substr(wp_remote_retrieve_body($v2_resp),0,200);
+        }
+
+        // Test resolve — v1 fallback
+        if (!$user_id) {
+            $v1_url = 'https://api.soundcloud.com/resolve.json?url='.rawurlencode($profile_url).'&client_id='.rawurlencode($client_id);
+            $v1_resp = wp_remote_get($v1_url, ['timeout'=>15,'user-agent'=>'Aipex Podcast System/1.0']);
+            $v1_code = is_wp_error($v1_resp) ? 'WP_Error: '.$v1_resp->get_error_message() : wp_remote_retrieve_response_code($v1_resp);
+            $log[] = 'Resolve v1 → HTTP '.$v1_code;
+            if (!is_wp_error($v1_resp) && $v1_code === 200) {
+                $v1_data = json_decode(wp_remote_retrieve_body($v1_resp), true);
+                $user_id = (int)($v1_data['id'] ?? 0);
+                $log[] = 'v1 user ID: '.($user_id ?: 'not found — body: '.substr(wp_remote_retrieve_body($v1_resp),0,200));
+            } else if (!is_wp_error($v1_resp)) {
+                $log[] = 'v1 body: '.substr(wp_remote_retrieve_body($v1_resp),0,200);
+            }
+        }
+
+        if ($user_id) {
+            set_transient('aipex_sc_user_id', $user_id, 7 * DAY_IN_SECONDS);
+            wp_send_json_success(['user_id'=>$user_id,'username'=>$username,'auth'=>($token?'OAuth token':'client_id only'),'log'=>$log]);
+        }
+        wp_send_json_error(['message'=>'Resolve failed. See log for details.','log'=>$log]);
     }
 
     public static function fetch_tracks_page($user_id, $next_href = null){
@@ -376,15 +428,21 @@ class Aipex_Podcast_Soundcloud {
             <button type="button" class="button" id="aipex-sc-test">Test Connection</button>
             <span id="aipex-sc-test-result" style="margin-left:10px;font-style:italic;color:#646970"></span>
         </p>
+        <pre id="aipex-sc-test-log" style="display:none;background:#f6f7f7;padding:10px;max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
         <script>
         jQuery(function($){
             $('#aipex-sc-test').on('click', function(){
-                var $btn=$(this), $r=$('#aipex-sc-test-result');
-                $btn.prop('disabled',true); $r.text('Testing…');
+                var $btn=$(this), $r=$('#aipex-sc-test-result'), $log=$('#aipex-sc-test-log');
+                $btn.prop('disabled',true); $r.text('Testing…'); $log.hide().text('');
                 $.post(ajaxurl,{action:'aipex_sc_test',nonce:<?php echo wp_json_encode($test_nonce); ?>},function(resp){
                     $btn.prop('disabled',false);
-                    if(resp&&resp.success) $r.css('color','green').text('✓ Connected — user ID: '+resp.data.user_id+' ('+resp.data.username+')');
-                    else $r.css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
+                    var d=resp&&resp.data?resp.data:{};
+                    if(resp&&resp.success){
+                        $r.css('color','green').text('✓ Connected — user ID: '+d.user_id+' ('+d.username+') via '+d.auth);
+                    } else {
+                        $r.css('color','red').text('✗ '+(d.message||'Failed'));
+                    }
+                    if(d.log&&d.log.length){ $log.show().text(d.log.join('\n')); }
                 }).fail(function(xhr){ $btn.prop('disabled',false); $r.css('color','red').text('HTTP '+xhr.status); });
             });
         });
