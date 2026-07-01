@@ -70,8 +70,8 @@ class Aipex_Podcast_Soundcloud {
         $token     = self::get_access_token();
 
         // Append client_id to every URL as a fallback
-        if ($client_id && !str_contains($url, 'client_id=')) {
-            $url .= (str_contains($url, '?') ? '&' : '?').'client_id='.rawurlencode($client_id);
+        if ($client_id && !(strpos($url, 'client_id=') !== false)) {
+            $url .= ((strpos($url, '?') !== false) ? '&' : '?').'client_id='.rawurlencode($client_id);
         }
 
         $headers = $token ? ['Authorization' => 'OAuth '.$token] : [];
@@ -91,11 +91,44 @@ class Aipex_Podcast_Soundcloud {
         if ($cached) return (int)$cached;
         $username = self::username();
         if (!$username) return 0;
-        $data = self::api_get('https://api-v2.soundcloud.com/resolve?url='.rawurlencode('https://soundcloud.com/'.$username));
+
+        // Try v2 first, fall back to v1 if it fails
+        $profile_url = 'https://soundcloud.com/'.rawurlencode($username);
+
+        $data = self::api_get('https://api-v2.soundcloud.com/resolve?url='.rawurlencode($profile_url));
+        if (!$data || empty($data['id'])) {
+            // v1 fallback — works with client_id on older app registrations
+            $data = self::api_get('https://api.soundcloud.com/resolve.json?url='.rawurlencode($profile_url));
+        }
+
         if (!$data || empty($data['id'])) return 0;
         $id = (int)$data['id'];
         set_transient('aipex_sc_user_id', $id, 7 * DAY_IN_SECONDS);
         return $id;
+    }
+
+    public static function ajax_test_connection(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_sc_test','nonce');
+
+        $client_id = self::client_id();
+        $username  = self::username();
+        if (!$client_id) wp_send_json_error(['message'=>'No Client ID saved in Settings.']);
+        if (!$username)  wp_send_json_error(['message'=>'No Username saved in Settings.']);
+
+        // Test OAuth token (if secret is set)
+        $token = self::get_access_token();
+        $auth_method = $token ? 'OAuth token' : 'client_id only (no client_secret set)';
+
+        // Clear cached user ID to force fresh resolve
+        delete_transient('aipex_sc_user_id');
+        $user_id = self::resolve_user_id();
+
+        if (!$user_id) {
+            wp_send_json_error(['message'=>'Resolve failed. Auth method: '.$auth_method.'. Check credentials are correct in Settings.']);
+        }
+
+        wp_send_json_success(['user_id'=>$user_id,'username'=>$username,'auth'=>$auth_method]);
     }
 
     public static function fetch_tracks_page($user_id, $next_href = null){
@@ -337,6 +370,26 @@ class Aipex_Podcast_Soundcloud {
             echo '<div class="notice notice-warning inline"><p>SoundCloud credentials not configured. Go to <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a> and enter your Client ID, Client Secret and Username first.</p></div>';
             return;
         }
+        $test_nonce = wp_create_nonce('aipex_sc_test');
+        ?>
+        <p>
+            <button type="button" class="button" id="aipex-sc-test">Test Connection</button>
+            <span id="aipex-sc-test-result" style="margin-left:10px;font-style:italic;color:#646970"></span>
+        </p>
+        <script>
+        jQuery(function($){
+            $('#aipex-sc-test').on('click', function(){
+                var $btn=$(this), $r=$('#aipex-sc-test-result');
+                $btn.prop('disabled',true); $r.text('Testing…');
+                $.post(ajaxurl,{action:'aipex_sc_test',nonce:<?php echo wp_json_encode($test_nonce); ?>},function(resp){
+                    $btn.prop('disabled',false);
+                    if(resp&&resp.success) $r.css('color','green').text('✓ Connected — user ID: '+resp.data.user_id+' ('+resp.data.username+')');
+                    else $r.css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
+                }).fail(function(xhr){ $btn.prop('disabled',false); $r.css('color','red').text('HTTP '+xhr.status); });
+            });
+        });
+        </script>
+        <?php
         ?>
         <div id="aipex-sc-wrap" style="max-width:700px;margin-top:10px">
             <p>
@@ -463,7 +516,7 @@ class Aipex_Podcast_Soundcloud {
             $row = $posted[$i] ?? [];
             if (empty($row['apply'])){ $remaining[] = $item; continue; }
             $url = esc_url_raw(trim($row['url'] ?? ''));
-            if (!$url || !str_contains($url, 'soundcloud.com')){ $remaining[] = $item; continue; }
+            if (!$url || !(strpos($url, 'soundcloud.com') !== false)){ $remaining[] = $item; continue; }
             update_post_meta((int)$item['episode_id'], 'soundcloud_url', $url);
             $done++;
         }

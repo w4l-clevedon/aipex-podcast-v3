@@ -24,6 +24,7 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_sc_import_start', ['Aipex_Podcast_Soundcloud','ajax_import_start']);
         add_action('wp_ajax_aipex_sc_import_batch', ['Aipex_Podcast_Soundcloud','ajax_import_batch']);
         add_action('wp_ajax_aipex_sc_create_draft', ['Aipex_Podcast_Soundcloud','ajax_create_draft']);
+        add_action('wp_ajax_aipex_sc_test', ['Aipex_Podcast_Soundcloud','ajax_test_connection']);
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);
@@ -56,7 +57,7 @@ class Aipex_Podcast_Core {
         if (!is_404()) return;
         $path = trim((string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), '/');
         $home_path = trim((string) wp_parse_url(home_url('/'), PHP_URL_PATH), '/');
-        if ($home_path && str_starts_with($path, $home_path . '/')) $path = substr($path, strlen($home_path) + 1);
+        if ($home_path && (strpos($path, $home_path . '/') === 0)) $path = substr($path, strlen($home_path) + 1);
         if (!preg_match('~^(?:host|presenter)/([^/]+)/?$~', $path, $m)) return;
         $slug = sanitize_title($m[1]);
         $post = get_page_by_path($slug, OBJECT, 'aipex_presenter');

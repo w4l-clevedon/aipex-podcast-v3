@@ -180,7 +180,7 @@ class Aipex_Podcast_Fields {
         $a = self::normalize($a); $b = self::normalize($b);
         if (!$a || !$b) return 0;
         similar_text($a, $b, $percent);
-        if (str_contains($a, $b) || str_contains($b, $a)) $percent = max($percent, 92);
+        if ((strpos($a, $b) !== false) || (strpos($b, $a) !== false)) $percent = max($percent, 92);
         return (int)round($percent);
     }
 
