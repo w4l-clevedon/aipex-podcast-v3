@@ -20,6 +20,8 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
         if(isset($_POST['aipex_apply_sc_review'])){ check_admin_referer('aipex_tools'); $msg=Aipex_Podcast_Soundcloud::apply_review($_POST['sc_review']??[]); self::notice($msg); }
         if(isset($_POST['aipex_clear_sc_review'])){ check_admin_referer('aipex_tools'); delete_option(Aipex_Podcast_Soundcloud::REVIEW_OPTION); self::notice('SoundCloud review list cleared.'); }
+        if(isset($_POST['aipex_apply_csv_review'])){ check_admin_referer('aipex_tools'); $msg=Aipex_Podcast_CSV_Importer::apply_review($_POST['csv_review']??[]); self::notice($msg); }
+        if(isset($_POST['aipex_clear_csv_review'])){ check_admin_referer('aipex_tools'); delete_option(Aipex_Podcast_CSV_Importer::REVIEW_OPTION); self::notice('CSV review list cleared.'); }
         if(isset($_POST['aipex_apply_title_match_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_title_match_review($_POST['title_match_review']??[]); self::notice($msg); }
         if(isset($_POST['aipex_clear_title_match'])){ check_admin_referer('aipex_tools'); delete_option('aipex_title_match_review'); self::notice('Title match review list cleared.'); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
@@ -280,6 +282,13 @@ class Aipex_Podcast_Admin {
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
+        echo '<h2>CSV Episode Import</h2>';
+        echo '<p>Import episode data from a CSV/TSV file with columns: <code>Podcast Title, Series, Presenter, soundcloud_url, Duration</code>. Matches against existing episodes using series + title. Fills in SoundCloud URL, duration, series and presenter — never overwrites existing values.</p>';
+        Aipex_Podcast_CSV_Importer::render_ui();
+        echo '</form>';
+        Aipex_Podcast_CSV_Importer::render_review();
+        Aipex_Podcast_CSV_Importer::render_new_episodes();
+        echo '<form method="post">'; wp_nonce_field('aipex_tools');
         echo '<h2>SoundCloud Track Importer</h2>';
         echo '<p>Fetches all tracks from the configured SoundCloud account, matches them to episodes by title, and stores the SoundCloud URL on each episode. The audio player will then use the SoundCloud embed instead of Dropbox. Credentials are set in <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a>.</p>';
         Aipex_Podcast_Soundcloud::render_ui();
