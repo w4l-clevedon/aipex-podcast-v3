@@ -2,98 +2,118 @@
 if (!defined('ABSPATH')) exit;
 
 /**
- * SoundCloud integration.
+ * SoundCloud integration — OAuth authenticated API, show-filtered batch
+ * importer, and new episode draft creation.
  *
- * Fetches all tracks from the configured SoundCloud account, fuzzy-matches
- * them against episode titles, and stores the SoundCloud track permalink URL
- * in the existing `soundcloud_url` field (already in the field alias map so
- * it's already surfaced in every place that reads audio data).
- *
- * Uses the SoundCloud API v2. Credentials are stored in wp_options via the
- * Settings screen — they are NEVER committed to the repository.
+ * Credentials: Client ID + Client Secret are stored encrypted in wp_options
+ * via the Settings page. The client credentials OAuth flow exchanges these for
+ * a short-lived access token (cached as a transient) used for all API calls.
+ * Credentials are NEVER committed to the repository.
  */
 class Aipex_Podcast_Soundcloud {
 
-    const REVIEW_OPTION = 'aipex_sc_review';
-    const STATE_KEY     = 'aipex_sc_import_state';
-    const INDEX_OPTION  = 'aipex_sc_track_index';
+    const REVIEW_OPTION      = 'aipex_sc_review';        // uncertain/unmatched tracks
+    const NEW_EP_OPTION      = 'aipex_sc_new_episodes';  // matched to show, no existing episode
+    const STATE_KEY          = 'aipex_sc_import_state';
+    const INDEX_OPTION       = 'aipex_sc_track_index';
 
     // -------------------------------------------------------------------------
-    // Settings helpers
+    // Credentials
     // -------------------------------------------------------------------------
 
     public static function client_id(){
         return trim(Aipex_Podcast_Crypto::decrypt(get_option('aipex_sc_client_id', '')));
     }
 
+    public static function client_secret(){
+        return trim(Aipex_Podcast_Crypto::decrypt(get_option('aipex_sc_client_secret', '')));
+    }
+
     public static function username(){
         return trim(get_option('aipex_sc_username', ''));
     }
 
+    /**
+     * Gets an OAuth access token via client credentials flow.
+     * Cached in a transient until 60 seconds before expiry.
+     */
+    private static function get_access_token(){
+        $cached = get_transient('aipex_sc_access_token');
+        if ($cached) return $cached;
+
+        $client_id     = self::client_id();
+        $client_secret = self::client_secret();
+        if (!$client_id || !$client_secret) return null;
+
+        $response = wp_remote_post('https://secure.soundcloud.com/oauth/token', [
+            'timeout' => 15,
+            'body'    => [
+                'grant_type'    => 'client_credentials',
+                'client_id'     => $client_id,
+                'client_secret' => $client_secret,
+            ],
+            'user-agent' => 'Aipex Podcast System/1.0',
+        ]);
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) return null;
+        $data  = json_decode(wp_remote_retrieve_body($response), true);
+        $token = $data['access_token'] ?? null;
+        if ($token) set_transient('aipex_sc_access_token', $token, max(60, (int)($data['expires_in'] ?? 3600) - 60));
+        return $token;
+    }
+
     // -------------------------------------------------------------------------
-    // API calls
+    // API
     // -------------------------------------------------------------------------
 
     private static function api_get($url){
+        $client_id = self::client_id();
+        $token     = self::get_access_token();
+
+        // Append client_id to every URL as a fallback
+        if ($client_id && !str_contains($url, 'client_id=')) {
+            $url .= (str_contains($url, '?') ? '&' : '?').'client_id='.rawurlencode($client_id);
+        }
+
+        $headers = $token ? ['Authorization' => 'OAuth '.$token] : [];
+
         $response = wp_remote_get($url, [
             'timeout'    => 15,
+            'headers'    => $headers,
             'user-agent' => 'Aipex Podcast System/1.0',
         ]);
-        if (is_wp_error($response)) return null;
-        $code = wp_remote_retrieve_response_code($response);
-        if ($code !== 200) return null;
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) return null;
         $body = json_decode(wp_remote_retrieve_body($response), true);
         return is_array($body) ? $body : null;
     }
 
-    /**
-     * Resolves the SoundCloud username to a numeric user ID.
-     * Cached in a transient for 7 days.
-     */
     public static function resolve_user_id(){
         $cached = get_transient('aipex_sc_user_id');
         if ($cached) return (int)$cached;
         $username = self::username();
-        $client_id = self::client_id();
-        if (!$username || !$client_id) return 0;
-        $url = 'https://api-v2.soundcloud.com/resolve?url='.rawurlencode('https://soundcloud.com/'.$username).'&client_id='.rawurlencode($client_id);
-        $data = self::api_get($url);
+        if (!$username) return 0;
+        $data = self::api_get('https://api-v2.soundcloud.com/resolve?url='.rawurlencode('https://soundcloud.com/'.$username));
         if (!$data || empty($data['id'])) return 0;
         $id = (int)$data['id'];
         set_transient('aipex_sc_user_id', $id, 7 * DAY_IN_SECONDS);
         return $id;
     }
 
-    /**
-     * Fetches one page of tracks for the user.
-     * Returns ['tracks' => [...], 'next_href' => string|null]
-     */
     public static function fetch_tracks_page($user_id, $next_href = null){
-        $client_id = self::client_id();
-        if (!$client_id || !$user_id) return null;
-        $url = $next_href ?: 'https://api-v2.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks?limit=200&client_id='.rawurlencode($client_id);
-        // Ensure client_id is always on the URL (next_href may not have it)
-        if ($next_href && !str_contains($next_href, 'client_id')) {
-            $url .= (str_contains($next_href, '?') ? '&' : '?').'client_id='.rawurlencode($client_id);
-        }
+        $url = $next_href ?: 'https://api-v2.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks?limit=200';
+        // Strip client_id from next_href so api_get() re-appends correctly
+        $url = preg_replace('/[?&]client_id=[^&]+/', '', $url);
+        $url = rtrim($url, '?&');
         $data = self::api_get($url);
         if (!$data) return null;
         $tracks = $data['collection'] ?? $data;
         if (!is_array($tracks)) return null;
-        return [
-            'tracks'    => $tracks,
-            'next_href' => $data['next_href'] ?? null,
-        ];
+        return ['tracks' => $tracks, 'next_href' => $data['next_href'] ?? null];
     }
 
     // -------------------------------------------------------------------------
-    // SoundCloud embed URL builder
+    // Embed URL helper
     // -------------------------------------------------------------------------
 
-    /**
-     * Given a SoundCloud track permalink URL, returns the iframe embed src.
-     * Colour defaults to the site's brand colour from Settings.
-     */
     public static function embed_url($permalink_url, $auto_play = false){
         $color = ltrim(sanitize_hex_color(Aipex_Podcast_Settings::get('brand_color')) ?: '#e4005a', '#');
         return 'https://w.soundcloud.com/player/?url='.rawurlencode($permalink_url)
@@ -103,37 +123,65 @@ class Aipex_Podcast_Soundcloud {
     }
 
     // -------------------------------------------------------------------------
-    // Batch import AJAX handlers
+    // Series lookup — used as the show filter during matching
+    // -------------------------------------------------------------------------
+
+    private static function get_series_lookup(){
+        static $lookup = null;
+        if ($lookup !== null) return $lookup;
+        $lookup = [];
+        foreach (get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1]) as $s) {
+            $lookup[$s->ID] = $s->post_title;
+        }
+        return $lookup;
+    }
+
+    private static function best_series_match($track_title, $min_score = 80){
+        $series = self::get_series_lookup();
+        $best_id = 0; $best_score = 0; $best_title = '';
+        foreach ($series as $sid => $stitle) {
+            $score = Aipex_Podcast_Fields::match_score($track_title, $stitle);
+            if ($score > $best_score) { $best_score = $score; $best_id = $sid; $best_title = $stitle; }
+        }
+        return $best_score >= $min_score ? ['id'=>$best_id,'title'=>$best_title,'score'=>$best_score] : null;
+    }
+
+    private static function best_episode_match($track_title, $series_id){
+        $episodes = get_posts([
+            'post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'all',
+            'meta_query'=>[['key'=>'soundcloud_url','compare'=>'NOT EXISTS']],
+            'post__in' => Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id) ?: [0],
+        ]);
+        $best = null; $best_score = 0;
+        foreach ($episodes as $ep) {
+            $score = Aipex_Podcast_Fields::match_score($track_title, $ep->post_title);
+            if ($score > $best_score) { $best_score = $score; $best = $ep; }
+        }
+        return $best ? ['post'=>$best,'score'=>$best_score] : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // AJAX — batch import
     // -------------------------------------------------------------------------
 
     public static function ajax_import_start(){
         if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
         check_ajax_referer('aipex_sc_import','nonce');
 
-        $client_id = self::client_id();
-        $username  = self::username();
-        if (!$client_id || !$username) wp_send_json_error(['message'=>'SoundCloud credentials not set. Go to Podcasts → Settings and enter your Client ID and Username first.']);
+        if (!self::client_id() || !self::username())
+            wp_send_json_error(['message'=>'SoundCloud credentials not set. Go to Settings → SoundCloud.']);
 
         $user_id = self::resolve_user_id();
-        if (!$user_id) wp_send_json_error(['message'=>'Could not resolve SoundCloud user. Check your username in Settings.']);
+        if (!$user_id) wp_send_json_error(['message'=>'Could not resolve SoundCloud user. Check the username in Settings.']);
 
-        // Reset
         delete_option(self::REVIEW_OPTION);
+        delete_option(self::NEW_EP_OPTION);
         delete_option(self::INDEX_OPTION);
         delete_transient(self::STATE_KEY);
 
-        $state = [
-            'user_id'   => $user_id,
-            'next_href' => null,
-            'fetched'   => 0,
-            'done'      => 0,
-            'linked'    => 0,
-            'review'    => 0,
-            'skipped'   => 0,
-            'phase'     => 'fetch', // fetch first, then match
-        ];
+        $state = ['user_id'=>$user_id,'next_href'=>null,'fetched'=>0,'done'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'phase'=>'fetch'];
         set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
-        wp_send_json_success(array_merge(self::run_fetch_batch($state), ['log'=>['Starting — fetching tracks from SoundCloud account @'.$username.'…']]));
+        wp_send_json_success(array_merge(self::run_fetch_batch($state), ['log'=>['Authenticated. Fetching tracks from @'.self::username().'…']]));
     }
 
     public static function ajax_import_batch(){
@@ -141,151 +189,152 @@ class Aipex_Podcast_Soundcloud {
         check_ajax_referer('aipex_sc_import','nonce');
         $state = get_transient(self::STATE_KEY);
         if (!$state || !is_array($state)) wp_send_json_error(['message'=>'No import in progress. Click Start.']);
-        if ($state['phase'] === 'fetch') wp_send_json_success(self::run_fetch_batch($state));
-        else wp_send_json_success(self::run_match_batch($state));
+        wp_send_json_success($state['phase'] === 'fetch' ? self::run_fetch_batch($state) : self::run_match_batch($state));
     }
 
-    // Phase 1: fetch all tracks from SoundCloud into the index option
     private static function run_fetch_batch($state){
         $page = self::fetch_tracks_page($state['user_id'], $state['next_href']);
-        $log = [];
-
+        $log  = [];
         if (!$page) {
-            // Fetch failed — move to match phase with whatever we have
-            $state['phase'] = 'match';
-            $state['match_offset'] = 0;
+            $state['phase'] = 'match'; $state['match_offset'] = 0;
             $index = get_option(self::INDEX_OPTION, []);
             $state['match_total'] = count($index);
             set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
-            $log[] = 'Fetch page failed. Proceeding to match with '.count($index).' tracks fetched so far.';
-            return ['phase'=>'fetch_done','fetched'=>$state['fetched'],'log'=>$log,'pct'=>50,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'skipped'=>0,'finished'=>false];
+            $log[] = 'Fetch page failed. Proceeding to match with '.count($index).' tracks.';
+            return ['phase'=>'fetch_error','fetched'=>$state['fetched'],'log'=>$log,'pct'=>50,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'finished'=>false];
         }
-
         $index = get_option(self::INDEX_OPTION, []);
         if (!is_array($index)) $index = [];
-
-        foreach ($page['tracks'] as $track) {
-            if (empty($track['title']) || empty($track['permalink_url'])) continue;
-            $index[] = [
-                'title'   => $track['title'],
-                'url'     => $track['permalink_url'],
-                'created' => $track['created_at'] ?? '',
-            ];
+        foreach ($page['tracks'] as $t) {
+            if (!empty($t['title']) && !empty($t['permalink_url']))
+                $index[] = ['title'=>$t['title'],'url'=>$t['permalink_url'],'created'=>$t['created_at']??''];
         }
         update_option(self::INDEX_OPTION, $index, false);
-
-        $state['fetched'] = count($index);
+        $state['fetched']   = count($index);
         $state['next_href'] = $page['next_href'];
-        $log[] = 'Fetched page — '.count($page['tracks']).' tracks, '.count($index).' total so far.';
-
+        $log[] = 'Fetched page — '.count($page['tracks']).' tracks, '.$state['fetched'].' total so far.';
         if (!$page['next_href']) {
-            // All pages fetched — move to matching phase
-            $state['phase'] = 'match';
-            $state['match_offset'] = 0;
-            $state['match_total'] = count($index);
-            $log[] = 'All tracks fetched ('.$state['fetched'].'). Starting episode matching…';
+            $state['phase'] = 'match'; $state['match_offset'] = 0; $state['match_total'] = count($index);
+            $log[] = 'All tracks fetched ('.$state['fetched'].'). Starting show-filtered matching…';
         }
-
         set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
-        return ['phase'=>'fetching','fetched'=>$state['fetched'],'log'=>$log,'pct'=>20,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'skipped'=>0,'finished'=>false];
+        return ['phase'=>'fetching','fetched'=>$state['fetched'],'log'=>$log,'pct'=>30,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'finished'=>false];
     }
 
-    // Phase 2: match fetched tracks against episodes
-    private static function run_match_batch($state, $batch_size = 30){
-        $index   = get_option(self::INDEX_OPTION, []);
-        $review  = get_option(self::REVIEW_OPTION, []);
-        if (!is_array($review)) $review = [];
-        $log     = [];
+    private static function run_match_batch($state, $batch_size = 25){
+        $index    = get_option(self::INDEX_OPTION, []);
+        $review   = get_option(self::REVIEW_OPTION, []); if (!is_array($review)) $review = [];
+        $new_eps  = get_option(self::NEW_EP_OPTION, []); if (!is_array($new_eps)) $new_eps = [];
+        $log      = [];
 
-        // Get episodes with no soundcloud_url set, in batches
-        if (empty($state['episode_ids'])) {
-            $all = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids','orderby'=>'date','order'=>'DESC']);
-            // Only process episodes that don't already have a soundcloud_url
-            $state['episode_ids'] = array_values(array_filter($all, function($id){
-                return !Aipex_Podcast_Fields::get('soundcloud_url', $id);
-            }));
-            $state['match_total'] = count($state['episode_ids']);
-            $state['match_offset'] = 0;
-        }
+        $slice = array_slice($index, $state['match_offset'] ?? 0, $batch_size);
 
-        $slice = array_slice($state['episode_ids'], $state['match_offset'], $batch_size);
-
-        foreach ($slice as $episode_id) {
-            $title  = get_the_title($episode_id);
-            $match  = self::best_track_match($title, $index);
+        foreach ($slice as $track) {
             $state['done']++;
+            $title = $track['title'];
 
-            if (!$match) {
+            // ── Step 1: does this track belong to a show on the website? ──
+            $series_match = self::best_series_match($title, 80);
+            if (!$series_match) {
                 $state['skipped']++;
-                $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'track_url'=>'','track_title'=>'','score'=>0];
-                $state['review']++;
+                $log[] = 'SKIP (no show): '.mb_substr($title, 0, 60);
                 continue;
             }
 
-            if ($match['score'] >= 90) {
-                update_post_meta($episode_id, 'soundcloud_url', esc_url_raw($match['url']));
+            // ── Step 2: is there an existing episode to link it to? ──
+            $ep_match = self::best_episode_match($title, $series_match['id']);
+
+            if ($ep_match && $ep_match['score'] >= 90) {
+                update_post_meta($ep_match['post']->ID, 'soundcloud_url', esc_url_raw($track['url']));
+                Aipex_Podcast_Relationships::sync_post($ep_match['post']->ID);
                 $state['linked']++;
-                $log[] = 'LINKED '.$match['score'].'%: '.mb_substr($title,0,55).' → '.mb_substr($match['title'],0,40);
-            } elseif ($match['score'] >= 60) {
-                $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'track_url'=>$match['url'],'track_title'=>$match['title'],'score'=>$match['score']];
+                $log[] = 'LINKED '.$ep_match['score'].'%: '.mb_substr($title,0,50).' → '.mb_substr($ep_match['post']->post_title,0,40);
+            } elseif ($ep_match && $ep_match['score'] >= 60) {
+                $review[] = ['episode_id'=>$ep_match['post']->ID,'episode_title'=>$ep_match['post']->post_title,'track_url'=>$track['url'],'track_title'=>$title,'score'=>$ep_match['score'],'series_id'=>$series_match['id'],'series_title'=>$series_match['title']];
                 $state['review']++;
-                $log[] = 'REVIEW '.$match['score'].'%: '.mb_substr($title,0,55).' → '.mb_substr($match['title'],0,40).'?';
+                $log[] = 'REVIEW '.$ep_match['score'].'%: '.mb_substr($title,0,50).' → '.$ep_match['post']->post_title.'?';
             } else {
-                $review[] = ['episode_id'=>$episode_id,'episode_title'=>$title,'track_url'=>'','track_title'=>$match['title'].' ('.$match['score'].'%)','score'=>$match['score']];
-                $state['review']++;
-                $log[] = 'UNMATCHED '.$match['score'].'%: '.mb_substr($title,0,55);
+                // Track matches a known show but no existing episode — candidate for draft creation
+                $new_eps[] = ['track_title'=>$title,'track_url'=>$track['url'],'track_created'=>$track['created']??'','series_id'=>$series_match['id'],'series_title'=>$series_match['title'],'series_score'=>$series_match['score'],'presenter_id'=>0];
+                $state['new_ep']++;
+                $log[] = 'NEW EP: '.mb_substr($title,0,60).' (show: '.$series_match['title'].')';
             }
         }
 
         update_option(self::REVIEW_OPTION, $review, false);
-        $state['match_offset'] += $batch_size;
+        update_option(self::NEW_EP_OPTION, $new_eps, false);
 
-        $total    = max(1, $state['match_total']);
-        $finished = $state['match_offset'] >= $state['match_total'];
-        $pct      = min(100, (int)round(50 + 50 * $state['match_offset'] / $total));
+        $state['match_offset'] = ($state['match_offset'] ?? 0) + $batch_size;
+        $finished = $state['match_offset'] >= count($index);
+        $pct      = min(100, (int)round(30 + 70 * $state['match_offset'] / max(1, count($index))));
 
         if ($finished) {
             delete_transient(self::STATE_KEY);
-            $log[] = 'Done. Auto-linked: '.$state['linked'].'. Needs review: '.$state['review'].'. Already had SC URL (skipped): '.$state['skipped'].'.';
+            $log[] = 'Done. Linked: '.$state['linked'].'. Review: '.$state['review'].'. New episode candidates: '.$state['new_ep'].'. Not on site: '.$state['skipped'].'.';
         } else {
             set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
         }
 
-        return [
-            'phase'    => 'matching',
-            'fetched'  => $state['fetched'],
-            'done'     => $state['done'],
-            'total'    => $state['match_total'],
-            'linked'   => $state['linked'],
-            'review'   => $state['review'],
-            'skipped'  => $state['skipped'],
-            'pct'      => $pct,
-            'finished' => $finished,
-            'log'      => $log,
-        ];
-    }
-
-    private static function best_track_match($episode_title, $index){
-        if (!$index) return null;
-        $best_score = 0; $best = null;
-        foreach ($index as $track) {
-            $score = Aipex_Podcast_Fields::match_score($episode_title, $track['title']);
-            if ($score > $best_score) { $best_score = $score; $best = $track; }
-        }
-        return $best ? array_merge($best, ['score' => $best_score]) : null;
+        return ['phase'=>'matching','fetched'=>$state['fetched'],'done'=>$state['done'],'total'=>count($index),'linked'=>$state['linked'],'review'=>$state['review'],'new_ep'=>$state['new_ep'],'skipped'=>$state['skipped'],'pct'=>$pct,'finished'=>$finished,'log'=>$log];
     }
 
     // -------------------------------------------------------------------------
-    // Review UI
+    // AJAX — create draft episode from a new-episode candidate
+    // -------------------------------------------------------------------------
+
+    public static function ajax_create_draft(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'], 403);
+        check_ajax_referer('aipex_sc_draft','nonce');
+
+        $index      = (int)($_POST['index'] ?? -1);
+        $series_id  = (int)($_POST['series_id'] ?? 0);
+        $presenter_id = (int)($_POST['presenter_id'] ?? 0);
+
+        $new_eps = get_option(self::NEW_EP_OPTION, []);
+        if (!isset($new_eps[$index])) wp_send_json_error(['message'=>'Item not found.']);
+
+        $item = $new_eps[$index];
+        $post_id = wp_insert_post([
+            'post_type'   => 'aipex_podcast',
+            'post_status' => 'draft',
+            'post_title'  => sanitize_text_field($item['track_title']),
+            'post_date'   => !empty($item['track_created']) ? date('Y-m-d H:i:s', strtotime($item['track_created'])) : current_time('mysql'),
+        ]);
+        if (is_wp_error($post_id)) wp_send_json_error(['message'=>$post_id->get_error_message()]);
+
+        // Store SC URL
+        update_post_meta($post_id, 'soundcloud_url', esc_url_raw($item['track_url']));
+
+        // Assign show
+        $show_id = $series_id ?: $item['series_id'];
+        if ($show_id) {
+            Aipex_Podcast_Fields::update('series', [$show_id], $post_id);
+            Aipex_Podcast_Relationships::add(Aipex_Podcast_Relationships::TYPE_EPISODE, $post_id, Aipex_Podcast_Relationships::TYPE_SHOW, $show_id);
+        }
+
+        // Assign presenter if selected
+        if ($presenter_id) {
+            Aipex_Podcast_Fields::update('presenters', [$presenter_id], $post_id);
+            Aipex_Podcast_Relationships::add(Aipex_Podcast_Relationships::TYPE_EPISODE, $post_id, Aipex_Podcast_Relationships::TYPE_HOST, $presenter_id);
+        }
+
+        // Remove from queue
+        unset($new_eps[$index]);
+        update_option(self::NEW_EP_OPTION, array_values($new_eps), false);
+
+        wp_send_json_success(['post_id'=>$post_id,'edit_url'=>get_edit_post_link($post_id, 'raw'),'title'=>$item['track_title']]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin UI
     // -------------------------------------------------------------------------
 
     public static function render_ui(){
         $nonce        = wp_create_nonce('aipex_sc_import');
         $review_count = count(get_option(self::REVIEW_OPTION, []));
-        $client_id    = self::client_id();
-        $username     = self::username();
-        if (!$client_id || !$username) {
-            echo '<div class="notice notice-warning inline"><p>SoundCloud credentials not configured. Go to <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a> and enter your Client ID and Username first.</p></div>';
+        $new_ep_count = count(get_option(self::NEW_EP_OPTION, []));
+        if (!self::client_id() || !self::username()) {
+            echo '<div class="notice notice-warning inline"><p>SoundCloud credentials not configured. Go to <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a> and enter your Client ID, Client Secret and Username first.</p></div>';
             return;
         }
         ?>
@@ -293,7 +342,12 @@ class Aipex_Podcast_Soundcloud {
             <p>
                 <button type="button" class="button button-primary" id="aipex-sc-start">Start Import</button>
                 <button type="button" class="button" id="aipex-sc-stop" style="display:none">Stop</button>
-                <?php if($review_count): ?><strong style="margin-left:12px"><?php echo esc_html($review_count); ?> tracks waiting in the review table below.</strong><?php endif; ?>
+                <?php if($review_count||$new_ep_count): ?>
+                    <span style="margin-left:12px">
+                        <?php if($review_count) echo '<strong>'.$review_count.' uncertain</strong> in review table. '; ?>
+                        <?php if($new_ep_count) echo '<strong>'.$new_ep_count.' new episode candidates</strong> below.'; ?>
+                    </span>
+                <?php endif; ?>
                 <span id="aipex-sc-status" style="margin-left:12px;color:#646970"></span>
             </p>
             <div style="height:16px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:8px">
@@ -314,9 +368,9 @@ class Aipex_Podcast_Soundcloud {
                     var d=resp.data;
                     $bar.css('width',(d.pct||0)+'%');
                     $.each(d.log||[],function(_,l){ log(l); });
-                    if(d.phase==='fetching') $status.text('Fetching SoundCloud tracks… '+d.fetched+' so far');
-                    else $status.text('Matching: '+d.done+'/'+d.total+' episodes (linked: '+d.linked+', review: '+d.review+')');
-                    if(d.finished){ running=false; $start.prop('disabled',false); $stop.hide(); $bar.css('width','100%'); $status.text('Complete. Refresh this page to see the review table.'); }
+                    if(d.phase==='fetching'||d.phase==='fetch_error') $status.text('Fetching SC tracks… '+d.fetched+' so far');
+                    else $status.text('Matching '+d.done+'/'+d.total+' — linked:'+d.linked+' review:'+d.review+' new:'+d.new_ep+' skipped:'+d.skipped);
+                    if(d.finished){ running=false; $start.prop('disabled',false); $stop.hide(); $bar.css('width','100%'); $status.text('Complete. Refresh to see review and new episode tables.'); }
                     else setTimeout(function(){ step('aipex_sc_import_batch'); },300);
                 }).fail(function(xhr){ running=false; $start.prop('disabled',false); $stop.hide(); log('AJAX failed: HTTP '+xhr.status); });
             }
@@ -330,35 +384,76 @@ class Aipex_Podcast_Soundcloud {
     public static function render_review(){
         $items = get_option(self::REVIEW_OPTION, []);
         if (!$items) return;
-        echo '<hr><h2>SoundCloud Matching — Needs Review ('.count($items).' episodes)</h2>';
-        echo '<p>';
-        echo '<strong style="color:#b45309">⚠ 60–89%</strong> — uncertain, track pre-selected, verify it\'s correct. ';
-        echo '<strong style="color:#b91c1c">✗ Below 60%</strong> — no confident match, enter or paste the SoundCloud URL manually. ';
-        echo 'Leave unticked to skip.';
-        echo '</p>';
+        echo '<hr><h2>SoundCloud Matching — Needs Review ('.count($items).')</h2>';
+        echo '<p><strong style="color:#b45309">⚠ 60–89%</strong> — uncertain match, URL pre-filled, verify it. <strong style="color:#b91c1c">✗ Below 60%</strong> — no confident episode match, paste URL manually. Leave unticked to skip.</p>';
         echo '<form method="post">'; wp_nonce_field('aipex_tools');
-        echo '<p>';
-        echo '<button class="button button-primary" name="aipex_apply_sc_review" value="1">Apply Selected</button> ';
-        echo '<button class="button" name="aipex_clear_sc_review" value="1" onclick="return confirm(\'Clear the review list?\')">Clear List</button>';
-        echo ' <label style="margin-left:16px"><input type="checkbox" id="aipex-sc-check-all"> Select all</label>';
-        echo '</p>';
-        echo '<table class="widefat striped"><thead><tr><th style="width:32px">Apply</th><th>Episode</th><th style="width:60px">Score</th><th>SoundCloud URL</th></tr></thead><tbody>';
+        echo '<p><button class="button button-primary" name="aipex_apply_sc_review" value="1">Apply Selected</button> ';
+        echo '<button class="button" name="aipex_clear_sc_review" value="1" onclick="return confirm(\'Clear?\')">Clear List</button>';
+        echo ' <label style="margin-left:16px"><input type="checkbox" id="aipex-sc-cb-all"> Select all</label></p>';
+        echo '<table class="widefat striped"><thead><tr><th style="width:32px">✓</th><th>Episode</th><th style="width:55px">Score</th><th>SoundCloud URL</th></tr></thead><tbody>';
         foreach ($items as $i => $item) {
-            $episode_id = (int)$item['episode_id'];
-            $score_color = $item['score'] >= 60 ? '#b45309' : '#b91c1c';
-            $score_label = $item['score'] >= 60 ? $item['score'].'%' : ($item['score'] ? $item['score'].'% ✗' : '—');
+            $ep_id = (int)$item['episode_id'];
+            $sc = $item['score'] >= 60 ? '#b45309' : '#b91c1c';
+            $sl = $item['score'] >= 60 ? $item['score'].'%' : ($item['score'] ? $item['score'].'% ✗' : '—');
             echo '<tr>';
-            echo '<td><input type="checkbox" class="aipex-sc-cb" name="sc_review['.(int)$i.'][apply]" value="1"></td>';
-            echo '<td><a href="'.esc_url(get_edit_post_link($episode_id)).'" target="_blank">'.esc_html($item['episode_title']).'</a>';
-            if (!empty($item['track_title'])) echo '<br><small style="color:#646970">Best guess: '.esc_html($item['track_title']).'</small>';
+            echo '<td><input type="checkbox" class="aipex-sc-cb" name="sc_review['.$i.'][apply]" value="1"></td>';
+            echo '<td><a href="'.esc_url(get_edit_post_link($ep_id)).'" target="_blank">'.esc_html($item['episode_title']).'</a>';
+            if(!empty($item['track_title'])) echo '<br><small style="color:#646970">SC track: '.esc_html($item['track_title']).'</small>';
+            echo '</td><td><strong style="color:'.esc_attr($sc).'">'.esc_html($sl).'</strong></td>';
+            echo '<td><input type="url" name="sc_review['.$i.'][url]" value="'.esc_attr($item['track_url']).'" placeholder="https://soundcloud.com/..." style="width:100%"></td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table></form>';
+        echo '<script>jQuery(function($){ $("#aipex-sc-cb-all").on("change",function(){ $(".aipex-sc-cb").prop("checked",this.checked); }); });</script>';
+    }
+
+    public static function render_new_episodes(){
+        $items = get_option(self::NEW_EP_OPTION, []);
+        if (!$items) return;
+        $presenters = get_posts(['post_type'=>'aipex_presenter','post_status'=>'publish','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
+        $series_all = get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
+        $draft_nonce = wp_create_nonce('aipex_sc_draft');
+        echo '<hr><h2>New Episode Candidates ('.count($items).')</h2>';
+        echo '<p>These SoundCloud tracks match a show on the website but have no existing episode post. Click <strong>Create Draft</strong> to create a draft episode post with the show and presenter pre-assigned.</p>';
+        echo '<table class="widefat striped"><thead><tr><th>Track</th><th>Matched Show</th><th>Assign Presenter</th><th style="width:130px"></th></tr></thead><tbody>';
+        foreach ($items as $i => $item) {
+            echo '<tr id="aipex-sc-new-'.esc_attr($i).'">';
+            echo '<td><a href="'.esc_url($item['track_url']).'" target="_blank">'.esc_html($item['track_title']).'</a>';
+            if (!empty($item['track_created'])) echo '<br><small style="color:#646970">'.esc_html(date('j M Y', strtotime($item['track_created']))).'</small>';
             echo '</td>';
-            echo '<td><strong style="color:'.esc_attr($score_color).'">'.esc_html($score_label).'</strong></td>';
-            echo '<td><input type="url" name="sc_review['.(int)$i.'][url]" value="'.esc_attr($item['track_url']).'" placeholder="https://soundcloud.com/womensradiostation/track-slug" style="width:100%"></td>';
+            echo '<td>';
+            echo '<select class="aipex-sc-series-sel" data-index="'.esc_attr($i).'">';
+            foreach ($series_all as $s) echo '<option value="'.esc_attr($s->ID).'" '.selected($s->ID,(int)$item['series_id'],false).'>'.esc_html($s->post_title).'</option>';
+            echo '</select>';
+            echo '<br><small style="color:#646970">'.esc_html($item['series_score']).'% match</small>';
+            echo '</td>';
+            echo '<td><select class="aipex-sc-presenter-sel" data-index="'.esc_attr($i).'"><option value="0">— None —</option>';
+            foreach ($presenters as $p) echo '<option value="'.esc_attr($p->ID).'">'.esc_html($p->post_title).'</option>';
+            echo '</select></td>';
+            echo '<td><button type="button" class="button button-primary aipex-sc-create-draft" data-index="'.esc_attr($i).'" data-nonce="'.esc_attr($draft_nonce).'">Create Draft</button></td>';
             echo '</tr>';
         }
         echo '</tbody></table>';
-        echo '</form>';
-        echo '<script>jQuery(function($){ $("#aipex-sc-check-all").on("change",function(){ $(".aipex-sc-cb").prop("checked",this.checked); }); });</script>';
+        ?>
+        <script>
+        jQuery(function($){
+            $(document).on('click','.aipex-sc-create-draft',function(){
+                var $btn=$(this), idx=$btn.data('index'), nonce=$btn.data('nonce');
+                var series_id=$('.aipex-sc-series-sel[data-index="'+idx+'"]').val()||0;
+                var presenter_id=$('.aipex-sc-presenter-sel[data-index="'+idx+'"]').val()||0;
+                $btn.prop('disabled',true).text('Creating…');
+                $.post(ajaxurl,{action:'aipex_sc_create_draft',nonce:nonce,index:idx,series_id:series_id,presenter_id:presenter_id},function(resp){
+                    if(resp&&resp.success){
+                        $('#aipex-sc-new-'+idx).html('<td colspan="4" style="color:green">✓ Draft created: <a href="'+resp.data.edit_url+'" target="_blank">'+resp.data.title+'</a></td>');
+                    } else {
+                        $btn.prop('disabled',false).text('Create Draft');
+                        alert('Error: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Unknown error'));
+                    }
+                }).fail(function(){ $btn.prop('disabled',false).text('Create Draft'); alert('Request failed'); });
+            });
+        });
+        </script>
+        <?php
     }
 
     public static function apply_review($posted){

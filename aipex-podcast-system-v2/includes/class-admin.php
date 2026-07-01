@@ -297,6 +297,7 @@ class Aipex_Podcast_Admin {
         echo '<button class="button" name="aipex_remove_default_sponsor" value="1" onclick="return confirm(&quot;Remove this sponsor from all shows?&quot;)">Remove This Sponsor From Shows</button></p>';
         echo '</form>';
         Aipex_Podcast_Soundcloud::render_review();
+        Aipex_Podcast_Soundcloud::render_new_episodes();
         self::render_title_match_review();
         self::render_txt_review();
         self::render_duplicates();

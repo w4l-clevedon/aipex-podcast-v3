@@ -1,14 +1,68 @@
 jQuery(function($){
-  function setTrack($wrap,$btn, autoplay){
-    var audio = $wrap.find('#aipex-floating-audio')[0];
-    if(!audio || !$btn.length) return;
+  // ── SoundCloud Widget API ──────────────────────────────────────────────────
+  // Initialised lazily on first play; one widget instance per floating player.
+  var scWidgets = {};
+
+  function getScWidget($wrap){
+    var id = $wrap.attr('id');
+    if (!id) { id = 'aipex-fp-'+Date.now(); $wrap.attr('id', id); }
+    if (scWidgets[id]) return scWidgets[id];
+    var iframe = $wrap.find('.aipex-sc-widget-frame')[0];
+    if (!iframe || typeof SC === 'undefined') return null;
+    var widget = SC.Widget(iframe);
+    widget.bind(SC.Widget.Events.FINISH, function(){ advanceTrack($wrap, 1, false); });
+    widget.bind(SC.Widget.Events.PLAY, function(){ $wrap.find('.aipex-sc-btn-play').text('⏸'); });
+    widget.bind(SC.Widget.Events.PAUSE, function(){ $wrap.find('.aipex-sc-btn-play').text('▶'); });
+    scWidgets[id] = widget;
+    return widget;
+  }
+
+  // ── Unified setTrack — works for both audio and SoundCloud modes ──────────
+  function setTrack($wrap, $btn, autoplay){
+    if (!$btn.length) return;
     $wrap.find('.aipex-floating-track').removeClass('is-active');
     $btn.addClass('is-active');
-    $wrap.attr('data-current',$btn.data('index'));
-    $wrap.find('.aipex-floating-now strong').text($btn.data('title'));
-    $(audio).attr('src',$btn.data('audio'));
-    if(autoplay) audio.play();
+    $wrap.attr('data-current', $btn.data('index'));
+    $wrap.find('.aipex-now-title').text($btn.data('title'));
+
+    var mode = $wrap.data('mode') || 'audio';
+
+    if (mode === 'soundcloud') {
+      var scUrl = $btn.data('sc-url');
+      if (!scUrl) return;
+      // SC Widget API may not be loaded yet (async script); retry if needed
+      var tryLoad = function(){
+        var widget = getScWidget($wrap);
+        if (!widget) { setTimeout(tryLoad, 300); return; }
+        widget.load(scUrl, {auto_play: autoplay, buying: false, liking: false, download: false, sharing: false, show_artwork: false, show_playcount: false, show_user: false});
+      };
+      tryLoad();
+    } else {
+      var audio = $wrap.find('#aipex-floating-audio')[0];
+      if (!audio) return;
+      $(audio).attr('src', $btn.data('audio'));
+      if (autoplay) audio.play();
+    }
   }
+
+  function advanceTrack($wrap, dir, autoplay){
+    var $tracks = $wrap.find('.aipex-floating-track:visible');
+    var $all    = $wrap.find('.aipex-floating-track');
+    var cur     = parseInt($wrap.attr('data-current') || 0, 10);
+    var vi      = $tracks.index($all.eq(cur));
+    if (vi < 0) vi = 0;
+    vi += dir;
+    if (vi < 0) vi = $tracks.length - 1;
+    if (vi >= $tracks.length) vi = 0;
+    setTrack($wrap, $tracks.eq(vi), autoplay !== false);
+  }
+
+  // SC play/pause toggle button
+  $(document).on('click', '.aipex-sc-btn-play', function(){
+    var $wrap = $(this).closest('.aipex-floating-player');
+    var widget = getScWidget($wrap);
+    if (widget) widget.toggle();
+  });
 
   $(document).on('click','.aipex-floating-track',function(){
     var $wrap = $(this).closest('.aipex-floating-player');
@@ -18,13 +72,8 @@ jQuery(function($){
   });
 
   $(document).on('click','.aipex-float-next,.aipex-float-prev',function(){
-    var $wrap=$(this).closest('.aipex-floating-player'), $tracks=$wrap.find('.aipex-floating-track:visible'), cur=parseInt($wrap.attr('data-current')||0,10);
-    var $all=$wrap.find('.aipex-floating-track');
-    var currentVisibleIndex = $tracks.index($all.eq(cur));
-    if(currentVisibleIndex < 0) currentVisibleIndex = 0;
-    currentVisibleIndex += $(this).hasClass('aipex-float-next') ? 1 : -1;
-    if(currentVisibleIndex<0) currentVisibleIndex=$tracks.length-1; if(currentVisibleIndex>=$tracks.length) currentVisibleIndex=0;
-    setTrack($wrap, $tracks.eq(currentVisibleIndex), true);
+    var dir = $(this).hasClass('aipex-float-next') ? 1 : -1;
+    advanceTrack($(this).closest('.aipex-floating-player'), dir, true);
   });
 
   $(document).on('click','.aipex-episode-drawer-toggle',function(){

@@ -27,15 +27,6 @@ class Aipex_Podcast_Shortcodes {
     public static function aipex_podcast_player($atts=[]){
         self::enqueue();
         $id  = get_the_ID();
-        $sc_url = Aipex_Podcast_Fields::get('soundcloud_url', $id);
-        if ($sc_url && class_exists('Aipex_Podcast_Soundcloud')) {
-            // SoundCloud embed — richer player, no need for a raw audio URL
-            $embed_src = Aipex_Podcast_Soundcloud::embed_url($sc_url, false);
-            return '<div class="aipex-player aipex-sc-player">'
-                .'<iframe width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" loading="lazy" src="'.esc_url($embed_src).'"></iframe>'
-                .'</div>';
-        }
-        // Fallback: raw audio file / Dropbox
         $url = Aipex_Podcast_Fields::audio_url($id);
         if (!$url) return '<p class="aipex-empty">No audio found.</p>';
         return '<div class="aipex-player"><audio controls preload="none" src="'.esc_url($url).'"></audio></div>';
@@ -47,49 +38,77 @@ class Aipex_Podcast_Shortcodes {
 
         $query_args = ['posts_per_page'=>(int)$atts['limit']];
         if ($atts['context'] === 'auto') {
-            $series_id = Aipex_Podcast_Fields::current_context('aipex_series');
+            $series_id    = Aipex_Podcast_Fields::current_context('aipex_series');
             $presenter_id = Aipex_Podcast_Fields::current_context('aipex_presenter');
-            if ($series_id) $query_args['series_id'] = $series_id;
+            if ($series_id)    $query_args['series_id']    = $series_id;
             if ($presenter_id) $query_args['presenter_id'] = $presenter_id;
         }
 
         $q = Aipex_Podcast_Fields::query_episodes($query_args);
         $tracks = [];
         while ($q->have_posts()) { $q->the_post();
-            $url = Aipex_Podcast_Fields::audio_url(get_the_ID());
-            if (!$url) continue;
+            $id     = get_the_ID();
+            $sc_url = Aipex_Podcast_Fields::get('soundcloud_url', $id);
+            $direct = $sc_url ? '' : Aipex_Podcast_Fields::audio_url($id);
+            if (!$sc_url && !$direct) continue;
             $tracks[] = [
-                'id'=>get_the_ID(),
-                'title'=>get_the_title(),
-                'url'=>$url,
-                'link'=>get_permalink(),
-                'date'=>get_the_date('Y-m-d'),
-                'duration'=>Aipex_Podcast_Fields::field('duration', get_the_ID(), '')
+                'id'       => $id,
+                'title'    => get_the_title(),
+                'sc_url'   => $sc_url ?: '',
+                'audio'    => $direct,
+                'link'     => get_permalink(),
+                'date'     => get_the_date('j M Y'),
+                'duration' => Aipex_Podcast_Fields::field('duration', $id, ''),
             ];
         }
         wp_reset_postdata();
         if (!$tracks) return '';
-        $first = $tracks[0];
 
-        $out = '<div class="aipex-floating-player aipex-floating-player-v3" data-current="0">';
+        // Determine whether this playlist uses SoundCloud (first track decides)
+        $use_sc = !empty($tracks[0]['sc_url']);
+        $first  = $tracks[0];
+        $embed_src = ($use_sc && class_exists('Aipex_Podcast_Soundcloud'))
+            ? Aipex_Podcast_Soundcloud::embed_url($first['sc_url'], false) : '';
+
+        $out  = '<div class="aipex-floating-player aipex-floating-player-v3" data-current="0" data-mode="'.($use_sc?'soundcloud':'audio').'">';
         $out .= '<div class="aipex-floating-bar">';
         $out .= '<button class="aipex-player-minimise" type="button" aria-label="Minimise player">🎧</button>';
-        $out .= '<div class="aipex-floating-now"><span>Now playing</span><strong>'.esc_html($first['title']).'</strong></div>';
-        $out .= '<audio id="aipex-floating-audio" controls preload="none" src="'.esc_url($first['url']).'"></audio>';
-        $out .= '<div class="aipex-floating-controls"><button type="button" class="aipex-float-prev" aria-label="Previous episode">‹</button><button type="button" class="aipex-float-next" aria-label="Next episode">›</button></div>';
+        $out .= '<div class="aipex-floating-now"><span>Now playing</span><strong class="aipex-now-title">'.esc_html($first['title']).'</strong></div>';
+
+        if ($use_sc) {
+            // SoundCloud Widget API — hidden iframe controlled by our custom UI
+            $out .= '<div class="aipex-sc-widget-wrap" style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none">'
+                   .'<iframe id="aipex-sc-widget-iframe" class="aipex-sc-widget-frame" scrolling="no" frameborder="no" allow="autoplay" src="'.esc_url($embed_src).'"></iframe>'
+                   .'</div>';
+            $out .= '<div class="aipex-sc-controls">';
+            $out .= '<button type="button" class="aipex-sc-btn-play" aria-label="Play/Pause">▶</button>';
+            $out .= '</div>';
+        } else {
+            $out .= '<audio id="aipex-floating-audio" controls preload="none" src="'.esc_url($first['audio']).'"></audio>';
+        }
+
+        $out .= '<div class="aipex-floating-controls"><button type="button" class="aipex-float-prev" aria-label="Previous">‹</button><button type="button" class="aipex-float-next" aria-label="Next">›</button></div>';
         $out .= '<button class="aipex-episode-drawer-toggle" type="button"><span class="aipex-btn-icon">☰</span> Episodes <span class="aipex-track-count">'.count($tracks).'</span> <span class="aipex-caret">⌄</span></button>';
-        $out .= '</div>';
+        $out .= '</div>'; // .aipex-floating-bar
 
         $out .= '<div class="aipex-episode-drawer" hidden>';
         $out .= '<div class="aipex-episode-drawer-head"><strong>Choose an episode</strong><input type="search" class="aipex-episode-search" placeholder="Search episodes…"></div>';
         $out .= '<div class="aipex-episode-list">';
-        foreach ($tracks as $i=>$t) {
-            $meta = trim(($t['date'] ?? '') . (!empty($t['duration']) ? ' · '.$t['duration'] : ''));
-            $out .= '<button type="button" class="aipex-floating-track'.($i===0?' is-active':'').'" data-index="'.esc_attr($i).'" data-audio="'.esc_url($t['url']).'" data-title="'.esc_attr($t['title']).'">';
+        foreach ($tracks as $i => $t) {
+            $meta = trim($t['date'].(!empty($t['duration'])?' · '.$t['duration']:''));
+            $out .= '<button type="button" class="aipex-floating-track'.($i===0?' is-active':'').'" data-index="'.esc_attr($i).'"'
+                   .' data-sc-url="'.esc_attr($t['sc_url']).'"'
+                   .' data-audio="'.esc_url($t['audio']).'"'
+                   .' data-title="'.esc_attr($t['title']).'">';
             $out .= '<span class="aipex-track-play">▶</span><span class="aipex-track-text"><strong>'.esc_html($t['title']).'</strong>'.($meta?'<small>'.esc_html($meta).'</small>':'').'</span>';
             $out .= '</button>';
         }
         $out .= '</div></div></div>';
+
+        // Load SC Widget API if needed (once per page)
+        if ($use_sc) {
+            $out .= '<script src="https://w.soundcloud.com/player/api.js" async></script>';
+        }
         return $out;
     }
 

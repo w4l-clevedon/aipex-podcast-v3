@@ -35,9 +35,14 @@ class Aipex_Podcast_Settings {
             $cid=sanitize_text_field(wp_unslash($_POST['sc_client_id']));
             if($cid) update_option('aipex_sc_client_id',Aipex_Podcast_Crypto::encrypt($cid),false);
         }
+        if(!empty($_POST['sc_client_secret'])){
+            $secret=sanitize_text_field(wp_unslash($_POST['sc_client_secret']));
+            if($secret) update_option('aipex_sc_client_secret',Aipex_Podcast_Crypto::encrypt($secret),false);
+        }
         if(isset($_POST['sc_username'])){
             update_option('aipex_sc_username',sanitize_text_field(wp_unslash($_POST['sc_username'])),false);
             delete_transient('aipex_sc_user_id');
+            delete_transient('aipex_sc_access_token');
         }
 
         set_transient('aipex_admin_notice','Settings saved.',60);
@@ -51,13 +56,15 @@ class Aipex_Podcast_Settings {
         $settings=self::all();
         $sc_username=get_option('aipex_sc_username','');
         $sc_set=(bool)get_option('aipex_sc_client_id','');
+        $sc_secret_set=(bool)get_option('aipex_sc_client_secret','');
         echo '<div class="wrap"><h1>Aipex Podcast System Settings</h1>';
         echo '<form method="post">'; wp_nonce_field('aipex_podcast_settings');
         echo '<h2>General</h2><table class="form-table">';
         echo '<tr><th><label for="default_sponsor_id">Default Sponsor ID</label></th><td><input type="number" id="default_sponsor_id" name="default_sponsor_id" value="'.esc_attr($settings['default_sponsor_id']).'" min="0" style="width:120px"><p class="description">Pre-filled on Tools &amp; Scanners sponsor actions. 0 = no default.</p></td></tr>';
         echo '<tr><th><label for="brand_color">Brand Colour</label></th><td><input type="text" id="brand_color" name="brand_color" value="'.esc_attr($settings['brand_color']).'" class="regular-text" placeholder="#e4005a"><p class="description">Applied to cards, buttons, the floating player, and SoundCloud embeds.</p></td></tr>';
-        echo '</table><h2>SoundCloud</h2><table class="form-table">';
-        echo '<tr><th><label for="sc_client_id">Client ID</label></th><td><input type="password" id="sc_client_id" name="sc_client_id" value="" class="regular-text" autocomplete="new-password" placeholder="'.($sc_set?'(saved — paste to update)':'Enter SoundCloud Client ID').'"><p class="description">From soundcloud.com/you/apps. Stored encrypted. Leave blank to keep existing value.</p></td></tr>';
+        echo '</table><h2>SoundCloud</h2><p>Get your credentials from <a href="https://soundcloud.com/you/apps" target="_blank">soundcloud.com/you/apps</a>. Both Client ID and Client Secret are required for authenticated API access. All credentials are stored encrypted.</p><table class="form-table">';
+        echo '<tr><th><label for="sc_client_id">Client ID</label></th><td><input type="password" id="sc_client_id" name="sc_client_id" value="" class="regular-text" autocomplete="new-password" placeholder="'.($sc_set?'(saved — paste to update)':'Enter Client ID').'"></td></tr>';
+        echo '<tr><th><label for="sc_client_secret">Client Secret</label></th><td><input type="password" id="sc_client_secret" name="sc_client_secret" value="" class="regular-text" autocomplete="new-password" placeholder="'.($sc_secret_set?'(saved — paste to update)':'Enter Client Secret').'"></td></tr>';
         echo '<tr><th><label for="sc_username">Username</label></th><td><input type="text" id="sc_username" name="sc_username" value="'.esc_attr($sc_username).'" class="regular-text" placeholder="womensradiostation"><p class="description">The part after soundcloud.com/ on your profile page.</p></td></tr>';
         echo '</table>';
         echo '<p><button class="button button-primary" name="aipex_save_settings" value="1">Save Settings</button></p>';
