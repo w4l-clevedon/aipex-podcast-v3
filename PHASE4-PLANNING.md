@@ -44,3 +44,42 @@ Shown on dashboard
 1. Play-count table + tracking (self-contained, useful immediately)
 2. Dashboard "Most played" + per-episode counts
 3. Geographic location
+
+---
+
+## Architecture note — Taxonomies for Series and Presenters
+
+**Decision: deferred, new installs only**
+
+Raised during WRS build: Series and Presenters could be registered as
+WordPress taxonomies rather than CPTs, which would simplify querying and
+admin management.
+
+**Why it makes sense in principle:**
+- Taxonomies are faster to query than relationship table lookups
+- Native WordPress filtering on episode edit screens
+- Built-in archive URLs without rewrite rules
+- No custom relationship table needed for series/presenter associations
+
+**Why it was deferred for WRS:**
+- Presenters and Series both have full Elementor-templated pages on the
+  live site (/radio-presenter/, /show/) — term archive pages are far less
+  flexible to customise in Elementor
+- Presenters are entities, not categories — contact details, social
+  profiles, subscription URLs, linked WordPress users are structured data
+  that sits awkwardly on taxonomy terms even with ACF Pro taxonomy support
+- The relationship table (wp_aipex_relationships) is keyed on post IDs;
+  taxonomies use term IDs — significant rework for no functional gain on
+  an existing install
+- 1,300 episodes, live presenter pages, and a production relationship
+  table make migration risk high vs benefit low
+
+**Resolution: WRS stays on ACF CPTs for both Series and Presenters.**
+
+**For future/new installs:**
+Consider registering Series as a hierarchical taxonomy and Presenters as
+a flat taxonomy from day one. ACF Pro supports custom fields on taxonomy
+terms. The Aipex Elementor widgets and relationship API would need a
+parallel taxonomy-aware query path alongside the existing CPT path.
+Flag this in the Aipex Project OS product architecture decisions when
+packaging the plugin for distribution.
