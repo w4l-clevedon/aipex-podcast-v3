@@ -12,3 +12,17 @@
 .aipex-like-btn.is-liked{background:var(--aipex-brand,#e4005a);border-color:var(--aipex-brand,#e4005a);color:#fff}
 .aipex-like-heart{font-size:18px;line-height:1;transition:transform .15s ease}
 .aipex-like-btn:hover .aipex-like-heart,.aipex-like-btn.is-liked .aipex-like-heart{transform:scale(1.2)}
+
+.aipex-sc-playlist{display:flex;flex-direction:column;gap:16px;margin:0 0 24px}
+.aipex-sc-player-wrap{width:100%}
+.aipex-sc-frame{display:block;border-radius:8px;overflow:hidden}
+.aipex-sc-tracklist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.aipex-sc-track{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;transition:.15s;border:2px solid transparent}
+.aipex-sc-track:hover{background:#f6f7f7;border-color:#e4e7ec}
+.aipex-sc-track.is-active{background:#fdf2f8;border-color:var(--aipex-brand,#e4005a)}
+.aipex-sc-thumb{width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0}
+.aipex-sc-track-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.aipex-sc-track-title{font-weight:600;color:#111;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.aipex-sc-track-title:hover{color:var(--aipex-brand,#e4005a)}
+.aipex-sc-track.is-active .aipex-sc-track-title{color:var(--aipex-brand,#e4005a)}
+.aipex-sc-track-date{font-size:12px;color:#6b7280}

@@ -18,6 +18,8 @@ class Aipex_Podcast_Admin {
         if(isset($_POST['aipex_apply_txt_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_txt_review($_POST['txt_review']??[]); self::notice($msg); }
         if(isset($_POST['aipex_scan_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::scan_duplicates(); self::notice($msg); }
         if(isset($_POST['aipex_trash_duplicates'])){ check_admin_referer('aipex_tools'); $msg=self::trash_duplicates($_POST['duplicate_keep']??[], $_POST['duplicate_trash']??[]); self::notice($msg); }
+        if(isset($_POST['aipex_apply_sc_review'])){ check_admin_referer('aipex_tools'); $msg=Aipex_Podcast_Soundcloud::apply_review($_POST['sc_review']??[]); self::notice($msg); }
+        if(isset($_POST['aipex_clear_sc_review'])){ check_admin_referer('aipex_tools'); delete_option(Aipex_Podcast_Soundcloud::REVIEW_OPTION); self::notice('SoundCloud review list cleared.'); }
         if(isset($_POST['aipex_apply_title_match_review'])){ check_admin_referer('aipex_tools'); $msg=self::apply_title_match_review($_POST['title_match_review']??[]); self::notice($msg); }
         if(isset($_POST['aipex_clear_title_match'])){ check_admin_referer('aipex_tools'); delete_option('aipex_title_match_review'); self::notice('Title match review list cleared.'); }
         if(isset($_POST['aipex_apply_default_sponsor'])){ check_admin_referer('aipex_tools'); $msg=self::apply_default_sponsor((int)($_POST['default_sponsor_id']??Aipex_Podcast_Settings::get('default_sponsor_id')), !empty($_POST['replace_existing_sponsors'])); self::notice($msg); }
@@ -278,6 +280,9 @@ class Aipex_Podcast_Admin {
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
+        echo '<h2>SoundCloud Track Importer</h2>';
+        echo '<p>Fetches all tracks from the configured SoundCloud account, matches them to episodes by title, and stores the SoundCloud URL on each episode. The audio player will then use the SoundCloud embed instead of Dropbox. Credentials are set in <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a>.</p>';
+        Aipex_Podcast_Soundcloud::render_ui();
         echo '<h2>Episode → Show Matcher</h2>';
         echo '<p>Scans episodes that have no show assigned and matches them against show titles using the episode title. Episodes where the show name appears in the episode title will match confidently (e.g. "All Things Autism – Guest Name" → <em>All Things Autism</em>).</p>';
         echo '<p><strong>Auto-links</strong> anything scoring 90%+ (show name found in episode title). <strong>Holds for your review</strong> anything scoring 60–89% (uncertain) and below 60% (no confident match — you pick the show manually). Nothing is silently dropped.</p>';
@@ -291,6 +296,7 @@ class Aipex_Podcast_Admin {
         echo '<p><button class="button button-primary" name="aipex_apply_default_sponsor" value="1">Apply Default Sponsor To Shows</button> ';
         echo '<button class="button" name="aipex_remove_default_sponsor" value="1" onclick="return confirm(&quot;Remove this sponsor from all shows?&quot;)">Remove This Sponsor From Shows</button></p>';
         echo '</form>';
+        Aipex_Podcast_Soundcloud::render_review();
         self::render_title_match_review();
         self::render_txt_review();
         self::render_duplicates();

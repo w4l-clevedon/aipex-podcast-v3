@@ -16,6 +16,8 @@ class Aipex_Podcast_Shortcodes {
             'aipex_breadcrumbs','aipex_episode_meta','aipex_search','aipex_episode_filters',
             // Phase 4
             'aipex_play_count','aipex_like_button',
+            // SoundCloud
+            'aipex_soundcloud_playlist',
         ];
         foreach ($shortcodes as $sc) add_shortcode($sc, [__CLASS__, $sc]);
     }
@@ -24,7 +26,16 @@ class Aipex_Podcast_Shortcodes {
 
     public static function aipex_podcast_player($atts=[]){
         self::enqueue();
-        $id = get_the_ID();
+        $id  = get_the_ID();
+        $sc_url = Aipex_Podcast_Fields::get('soundcloud_url', $id);
+        if ($sc_url && class_exists('Aipex_Podcast_Soundcloud')) {
+            // SoundCloud embed — richer player, no need for a raw audio URL
+            $embed_src = Aipex_Podcast_Soundcloud::embed_url($sc_url, false);
+            return '<div class="aipex-player aipex-sc-player">'
+                .'<iframe width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" loading="lazy" src="'.esc_url($embed_src).'"></iframe>'
+                .'</div>';
+        }
+        // Fallback: raw audio file / Dropbox
         $url = Aipex_Podcast_Fields::audio_url($id);
         if (!$url) return '<p class="aipex-empty">No audio found.</p>';
         return '<div class="aipex-player"><audio controls preload="none" src="'.esc_url($url).'"></audio></div>';
@@ -504,11 +515,8 @@ class Aipex_Podcast_Shortcodes {
     }
 
     /**
-     * [aipex_like_button id="0" label="Like"]
-     * Renders a heart button with a live count. Works on any entity page
-     * (episode, show, presenter, guest, sponsor). Clicking it sends one like
-     * per visitor per post (enforced via a cookie) — the heart turns pink and
-     * the count updates without a page reload.
+     * [aipex_like_button id="0" label=""]
+     * Heart button with count, cookie-tracked, works on any entity page.
      */
     public static function aipex_like_button($atts=[]){
         $a = shortcode_atts(['id'=>0,'label'=>''], $atts);
@@ -523,5 +531,84 @@ class Aipex_Podcast_Shortcodes {
             .$label
             .'<span class="aipex-like-count">'.esc_html($count > 0 ? number_format($count) : 0).'</span>'
             .'</button>';
+    }
+
+    /**
+     * [aipex_soundcloud_playlist limit="12" show_id="0"]
+     * Renders a playlist of the latest episodes that have a SoundCloud URL,
+     * with a clickable track list and a single SoundCloud embed player that
+     * swaps tracks without page reloads using the SoundCloud Widget API.
+     *
+     * show_id: optionally filter to a specific series. Defaults to all episodes.
+     */
+    public static function aipex_soundcloud_playlist($atts=[]){
+        $a = shortcode_atts(['limit'=>12,'show_id'=>0], $atts);
+        self::enqueue();
+        $limit   = max(1, min(50, (int)$a['limit']));
+        $show_id = (int)$a['show_id'];
+
+        // Get episodes that have a soundcloud_url, newest first
+        $args = [
+            'post_type'      => 'aipex_podcast',
+            'post_status'    => 'publish',
+            'posts_per_page' => $limit,
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+            'meta_query'     => [['key'=>'soundcloud_url','compare'=>'EXISTS']],
+        ];
+        if ($show_id) {
+            $ep_ids = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $show_id);
+            if (!$ep_ids) return '';
+            $args['post__in'] = $ep_ids;
+        }
+        $posts = get_posts($args);
+        if (!$posts) return '<p class="aipex-empty">No episodes with SoundCloud audio found.</p>';
+
+        $tracks = [];
+        foreach ($posts as $p) {
+            $sc_url = Aipex_Podcast_Fields::get('soundcloud_url', $p->ID);
+            if (!$sc_url) continue;
+            $tracks[] = [
+                'id'    => $p->ID,
+                'title' => $p->post_title,
+                'date'  => get_the_date('j M Y', $p),
+                'url'   => $sc_url,
+                'embed' => class_exists('Aipex_Podcast_Soundcloud') ? Aipex_Podcast_Soundcloud::embed_url($sc_url, false) : '',
+                'thumb' => get_the_post_thumbnail_url($p->ID, 'thumbnail') ?: '',
+                'link'  => get_permalink($p->ID),
+            ];
+        }
+        if (!$tracks) return '';
+
+        $first_embed = esc_url($tracks[0]['embed']);
+        $uid = 'aipex-scpl-'.wp_rand(1000,9999);
+
+        $out  = '<div class="aipex-sc-playlist" id="'.esc_attr($uid).'">';
+        $out .= '<div class="aipex-sc-player-wrap">';
+        $out .= '<iframe id="'.esc_attr($uid).'-frame" class="aipex-sc-frame" width="100%" height="166" scrolling="no" frameborder="no" allow="autoplay" src="'.esc_url($first_embed).'"></iframe>';
+        $out .= '</div>';
+        $out .= '<ol class="aipex-sc-tracklist">';
+        foreach ($tracks as $i => $track) {
+            $active = $i === 0 ? ' class="aipex-sc-track is-active"' : ' class="aipex-sc-track"';
+            $out .= '<li'.$active.' data-embed="'.esc_attr($track['embed']).'" data-post-id="'.esc_attr($track['id']).'">';
+            if ($track['thumb']) $out .= '<img src="'.esc_url($track['thumb']).'" alt="" class="aipex-sc-thumb" loading="lazy">';
+            $out .= '<div class="aipex-sc-track-info">';
+            $out .= '<a href="'.esc_url($track['link']).'" class="aipex-sc-track-title">'.esc_html($track['title']).'</a>';
+            $out .= '<span class="aipex-sc-track-date">'.esc_html($track['date']).'</span>';
+            $out .= '</div></li>';
+        }
+        $out .= '</ol></div>';
+
+        // Inline JS — swaps the iframe src when a track is clicked
+        $out .= '<script>(function(){var pl=document.getElementById('.wp_json_encode($uid).');if(!pl)return;'
+            .'pl.querySelectorAll(".aipex-sc-track").forEach(function(li){'
+            .'li.addEventListener("click",function(e){if(e.target.tagName==="A")return;'
+            .'pl.querySelectorAll(".aipex-sc-track").forEach(function(t){t.classList.remove("is-active");});'
+            .'li.classList.add("is-active");'
+            .'var frame=document.getElementById('.wp_json_encode($uid.'-frame').');'
+            .'if(frame) frame.src=li.dataset.embed;'
+            .'});});})();</script>';
+
+        return $out;
     }
 }
