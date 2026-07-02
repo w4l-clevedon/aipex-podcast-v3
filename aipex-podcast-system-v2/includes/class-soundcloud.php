@@ -184,6 +184,7 @@ class Aipex_Podcast_Soundcloud {
                     'User-Agent: Aipex Podcast System/1.0',
                 ],
                 CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_UNRESTRICTED_AUTH => true,
                 CURLOPT_SSL_VERIFYPEER => true,
             ]);
             $last_body = (string)curl_exec($ch);
@@ -245,18 +246,44 @@ class Aipex_Podcast_Soundcloud {
         delete_transient('aipex_sc_user_id');
         $log[] = 'cURL available: '.(function_exists('curl_init')?'yes':'no');
         $log[] = 'Stored auth prefix: '.get_option('aipex_sc_auth_prefix','OAuth (default)');
+        $tok = self::access_token();
+        $log[] = 'Token first 20 chars: '.substr($tok,0,20).'… (type: '.(strpos($tok,'.')!==false?'JWT-style':'integer/opaque').')';
+        // Quick /me test with no client_id to isolate token validity
+        if (function_exists('curl_init')) {
+            $ch2 = curl_init('https://api.soundcloud.com/me');
+            curl_setopt_array($ch2,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>10,CURLOPT_HTTPHEADER=>['Authorization: OAuth '.$tok,'Accept: application/json','User-Agent: Aipex/1.0'],CURLOPT_UNRESTRICTED_AUTH=>true,CURLOPT_SSL_VERIFYPEER=>true]);
+            $me_body=(string)curl_exec($ch2); $me_code=(int)curl_getinfo($ch2,CURLINFO_HTTP_CODE); curl_close($ch2);
+            $log[] = '/me endpoint (no client_id) → HTTP '.$me_code;
+            if ($me_code!==200) $log[] = '/me body: '.substr($me_body,0,150);
+            else { $me=json_decode($me_body,true); $log[] = '/me OK — id: '.($me['id']??'?').' username: '.($me['permalink']??'?'); }
+        }
 
         // Test each prefix explicitly so we can see which one SoundCloud accepts
         $resolve_url = 'https://api.soundcloud.com/resolve.json?url='.rawurlencode('https://soundcloud.com/'.self::username()).'&client_id='.rawurlencode(self::client_id());
         foreach (['OAuth','Bearer'] as $prefix) {
             if (function_exists('curl_init')) {
                 $ch = curl_init($resolve_url);
-                curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>10,CURLOPT_HTTPHEADER=>['Authorization: '.$prefix.' '.self::access_token(),'User-Agent: Aipex/1.0'],CURLOPT_FOLLOWLOCATION=>true,CURLOPT_SSL_VERIFYPEER=>true]);
-                $body = (string)curl_exec($ch);
+                curl_setopt_array($ch,[
+                    CURLOPT_RETURNTRANSFER  => true,
+                    CURLOPT_TIMEOUT         => 10,
+                    CURLOPT_HTTPHEADER      => ['Authorization: '.$prefix.' '.self::access_token(),'User-Agent: Aipex/1.0'],
+                    CURLOPT_FOLLOWLOCATION  => true,
+                    CURLOPT_UNRESTRICTED_AUTH => true,  // keep Authorization header on redirect
+                    CURLOPT_SSL_VERIFYPEER  => true,
+                    CURLOPT_HEADER          => true,    // include response headers so we can see redirects
+                ]);
+                $raw = (string)curl_exec($ch);
                 $code = (int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
+                $redirect_count = (int)curl_getinfo($ch,CURLINFO_REDIRECT_COUNT);
+                $effective_url  = curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);
                 $curl_err = curl_error($ch);
                 curl_close($ch);
-                $log[] = 'cURL '.$prefix.' → HTTP '.$code.($curl_err?' [curl err: '.$curl_err.']':'');
+                // Split headers from body
+                $header_size = strpos($raw,"\r\n\r\n");
+                $body = $header_size!==false ? substr($raw,$header_size+4) : $raw;
+                $log[] = 'cURL '.$prefix.' → HTTP '.$code.' (redirects: '.$redirect_count.')'
+                    .($effective_url && $effective_url!=='https://api.soundcloud.com/resolve.json' ? ' final URL: '.$effective_url : '')
+                    .($curl_err?' [err: '.$curl_err.']':'');
                 if ($code === 200) { $r = ['code'=>200,'data'=>json_decode($body,true),'body'=>$body]; update_option('aipex_sc_auth_prefix',$prefix,false); break; }
                 $log[] = 'Body: '.substr($body,0,120);
             }
