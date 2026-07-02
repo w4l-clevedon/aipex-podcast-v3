@@ -426,17 +426,32 @@ class Aipex_Podcast_Soundcloud {
         if (!$series_id) return 0;
         if (isset($cache[$series_id])) return $cache[$series_id];
 
+        // Strategy 1: most-used presenter across existing episodes for this show
         $ep_ids = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id);
         $counts = [];
         foreach ($ep_ids as $ep_id) {
             $hosts = Aipex_Podcast_Relationships::hosts_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $ep_id);
             foreach ($hosts as $host_id) $counts[$host_id] = ($counts[$host_id] ?? 0) + 1;
         }
-        if (!$counts) { $cache[$series_id] = 0; return 0; }
-        arsort($counts);
-        $presenter_id = (int)array_key_first($counts);
-        $cache[$series_id] = $presenter_id;
-        return $presenter_id;
+        if ($counts) {
+            arsort($counts);
+            $cache[$series_id] = (int)array_key_first($counts);
+            return $cache[$series_id];
+        }
+
+        // Strategy 2: fuzzy-match the show name against presenter post titles.
+        // WRS presenter titles often contain the show name (e.g. a presenter
+        // whose post is titled after their show). Find the best match >= 75%.
+        $series_title = get_the_title($series_id);
+        $presenters   = get_posts(['post_type'=>'aipex_presenter','post_status'=>'any','posts_per_page'=>-1,'fields'=>'all']);
+        $best_id = 0; $best_score = 0;
+        foreach ($presenters as $p) {
+            $score = Aipex_Podcast_Fields::match_score($series_title, $p->post_title);
+            if ($score > $best_score) { $best_score = $score; $best_id = (int)$p->ID; }
+        }
+        $result = $best_score >= 75 ? $best_id : 0;
+        $cache[$series_id] = $result;
+        return $result;
     }
 
     private static function best_series_match($track_title, $min_score = 80){
