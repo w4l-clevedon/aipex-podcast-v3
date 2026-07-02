@@ -213,7 +213,24 @@ class Aipex_Podcast_Soundcloud {
         $r = self::api_get('https://api.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks.json?limit=200&offset='.rawurlencode((string)$offset));
         if ($r['code'] === 429) return ['error'=>'rate_limit'];
         if ($r['code'] !== 200 || !is_array($r['data'])) return null;
-        return ['tracks'=>$r['data'],'has_more'=>count($r['data']) === 200];
+        // SoundCloud v1 API cycles back to the start when offset exceeds
+        // the catalogue size — detect this by checking if the first track
+        // ID matches any track we've already seen (stored in index).
+        $tracks = $r['data'];
+        if ($offset > 0 && !empty($tracks)) {
+            $index = get_option('aipex_sc_track_index', []);
+            if (!empty($index)) {
+                $seen_urls = array_flip(array_column($index, 'url'));
+                $first_url = $tracks[0]['permalink_url'] ?? '';
+                if ($first_url && isset($seen_urls[$first_url])) {
+                    // We've looped back to the start — stop pagination
+                    return ['tracks'=>[],'has_more'=>false,'looped'=>true];
+                }
+            }
+        }
+        // Also stop if we got fewer than 200 (genuine last page)
+        $has_more = count($tracks) === 200;
+        return ['tracks'=>$tracks,'has_more'=>$has_more];
     }
 
     // -------------------------------------------------------------------------
@@ -348,6 +365,16 @@ class Aipex_Podcast_Soundcloud {
             set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
             $log[] = 'Fetch failed. Matching against '.count($index).' tracks.';
             return ['phase'=>'fetch_error','fetched'=>$state['fetched'],'log'=>$log,'pct'=>50,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'finished'=>false];
+        }
+
+        // Loop detected — SoundCloud v1 API cycled back to start
+        if (!empty($page['looped'])) {
+            $state['phase'] = 'match'; $state['match_offset'] = 0;
+            $index = get_option(self::INDEX_OPTION, []);
+            $state['match_total'] = count($index);
+            set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
+            $log[] = 'Pagination loop detected — end of catalogue. '.$state['fetched'].' unique tracks. Starting matching…';
+            return ['phase'=>'fetch_done','fetched'=>$state['fetched'],'log'=>$log,'pct'=>50,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'finished'=>false];
         }
 
         $index = get_option(self::INDEX_OPTION, []); if (!is_array($index)) $index = [];
