@@ -26,3 +26,40 @@
 .aipex-sc-track-title:hover{color:var(--aipex-brand,#e4005a)}
 .aipex-sc-track.is-active .aipex-sc-track-title{color:var(--aipex-brand,#e4005a)}
 .aipex-sc-track-date{font-size:12px;color:#6b7280}
+
+/* ── Episode header ───────────────────────────────────────────────────────── */
+.aipex-episode-header{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:20px 24px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
+.aipex-ep-title{margin:0;font-size:clamp(20px,3vw,28px);line-height:1.25;color:#111}
+.aipex-ep-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:14px;color:#6b7280}
+.aipex-ep-sep{opacity:.4;margin:0 2px}
+.aipex-ep-series{color:var(--aipex-brand,#e4005a);font-weight:600;text-decoration:none}
+.aipex-ep-series:hover{text-decoration:underline}
+.aipex-ep-comments{color:var(--aipex-brand,#e4005a);text-decoration:none;font-weight:600}
+.aipex-ep-comments:hover{text-decoration:underline}
+.aipex-ep-like{padding:4px 10px;font-size:14px;border-width:1px}
+.aipex-ep-entities{display:flex;flex-wrap:wrap;gap:8px}
+.aipex-ep-entity{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;text-decoration:none;border:1px solid #e4e7ec;color:#374151;background:#f9fafb;transition:.15s}
+.aipex-ep-entity:hover{border-color:var(--aipex-brand,#e4005a);color:var(--aipex-brand,#e4005a);background:#fdf2f8}
+.aipex-ep-materials{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px;border-top:1px solid #f0f0f1}
+.aipex-ep-material{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;color:#fff;background:var(--aipex-brand,#e4005a);transition:.15s}
+.aipex-ep-material:hover{opacity:.88}
+
+/* ── Transcript (details/summary) ────────────────────────────────────────── */
+.aipex-transcript-details{border:1px solid #e4e7ec;border-radius:12px;overflow:hidden;margin:0 0 24px}
+.aipex-transcript-details summary{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;cursor:pointer;font-weight:600;font-size:15px;list-style:none;user-select:none;background:#f9fafb}
+.aipex-transcript-details summary::-webkit-details-marker{display:none}
+.aipex-transcript-details summary .aipex-ts-caret{transition:transform .2s;font-size:18px;color:var(--aipex-brand,#e4005a)}
+.aipex-transcript-details[open] summary .aipex-ts-caret{transform:rotate(180deg)}
+.aipex-ts-preview{color:#6b7280;font-size:13px;font-weight:400;margin-left:8px;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aipex-ts-body{padding:20px;max-height:480px;overflow-y:auto;font-size:14px;line-height:1.75;white-space:pre-wrap;border-top:1px solid #e4e7ec}
+.aipex-ts-actions{display:flex;gap:8px;padding:12px 20px;border-top:1px solid #f0f0f1;background:#f9fafb}
+.aipex-ts-btn{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #e4e7ec;background:#fff;color:#374151;transition:.15s}
+.aipex-ts-btn:hover{border-color:var(--aipex-brand,#e4005a);color:var(--aipex-brand,#e4005a)}
+
+/* ── AI status badge (episode edit screen) ───────────────────────────────── */
+.aipex-ai-status{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.aipex-ai-status.complete{background:#dcfce7;color:#166534}
+.aipex-ai-status.processing{background:#fef9c3;color:#854d0e}
+.aipex-ai-status.pending{background:#dbeafe;color:#1e40af}
+.aipex-ai-status.failed{background:#fee2e2;color:#991b1b}
+.aipex-ai-status.none{background:#f3f4f6;color:#6b7280}

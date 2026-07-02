@@ -220,13 +220,14 @@ class Aipex_Podcast_Admin {
                 ['[aipex_relationship_grid relationship="episodes"]', 'One shortcode for every entity-to-entity grid. relationship can be episodes, shows, hosts, guests or sponsors; entity_id defaults to the current page. Covers pairings the dedicated shortcodes below don\'t, e.g. relationship="shows" on a host page, or relationship="guests" on a sponsor page.'],
             ],
             'Episode' => [
-                ['[aipex_podcast_player]', 'Audio player for the current episode.'],
-                ['[aipex_floating_player limit="12"]', 'Persistent floating player with an episode drawer. context="all" for unfiltered, or auto-detects series/presenter on those pages.'],
-                ['[aipex_play_count]', 'Number of times this episode has been played. Only shows once play data is recorded. Add id="123" to target a specific episode.'],
-                ['[aipex_like_button]', 'Heart button with live count. Works on any page (episode, show, presenter, guest, sponsor). One like per visitor, tracked via cookie. Add id="123" for a specific post or label="Like this" for custom text.'],
-                ['[aipex_podcast_summary]', "Current episode's summary."],
-                ['[aipex_podcast_main_points]', "Current episode's main points list."],
-                ['[aipex_podcast_transcript]', "Current episode's transcript."],
+                ['[aipex_episode_header]', 'Full episode header bar — title, series, duration, date, likes, comments, presenters, sponsors, guests, and materials. Place above the SoundCloud player in your Elementor template.'],
+                ['[aipex_podcast_player]', 'Audio player for the current episode (raw audio fallback — use Elementor SoundCloud widget for SC playback).'],
+                ['[aipex_floating_player limit="12"]', 'Persistent floating player. Uses SoundCloud Widget API when SC URLs are set, falls back to audio element.'],
+                ['[aipex_play_count]', 'Play count for the current episode. Hidden until at least one play recorded.'],
+                ['[aipex_like_button]', 'Heart + count. Works on any entity page. Cookie-tracked, one like per visitor.'],
+                ['[aipex_podcast_transcript]', 'Collapsible transcript with Copy and Download .txt buttons. Full text in DOM for SEO.'],
+                ['[aipex_podcast_summary]', "Current episode summary (reads post_content)."],
+                ['[aipex_podcast_main_points]', "Current episode key points list."],
                 ['[aipex_next_previous]', 'Prev/next navigation within the current post type.'],
             ],
             'Episode grids' => [
@@ -282,6 +283,12 @@ class Aipex_Podcast_Admin {
         echo '<h2>Core Sync</h2><p><button class="button button-primary" name="aipex_sync_dates" value="1">Sync Published Dates & Durations</button></p>';
         echo '<h2>TXT Content Scanner</h2><p>Scans Media Library TXT files, imports transcripts, summaries, series overviews, main points and hashtags. Matches below 90% are held for review.</p><p><button class="button button-primary" name="aipex_scan_txt" value="1">Scan TXT Content</button></p>';
         echo '<h2>Duplicate Episodes</h2><p>Finds likely duplicate podcast episodes by normalised title and audio URL.</p><p><button class="button" name="aipex_scan_duplicates" value="1">Scan For Duplicates</button></p>';
+        echo '<h2>AI Transcription &amp; Content</h2>';
+        echo '<p>Generates transcripts (AssemblyAI), summaries (post content), key points, and tags (Claude) for podcast episodes. Run the scanner first to see counts and estimated cost before processing anything.</p>';
+        self::render_transcription_ui();
+        echo '<hr><h2>Summary Migration</h2>';
+        echo '<p>One-time tool — copies content from old ACF summary fields to post_content for podcasts, series, presenters, sponsors, and guests. Only writes if post_content is currently empty. Run once then the ACF summary fields can be removed.</p>';
+        self::render_migration_ui();
         echo '<h2>CSV Episode Import</h2>';
         echo '<p>Import episode data from a CSV/TSV file with columns: <code>Podcast Title, Series, Presenter, soundcloud_url, Duration</code>. Matches against existing episodes using series + title. Fills in SoundCloud URL, duration, series and presenter — never overwrites existing values.</p>';
         Aipex_Podcast_CSV_Importer::render_ui();
@@ -523,6 +530,169 @@ class Aipex_Podcast_Admin {
         }
         return 'Removed sponsor '.$sponsor_id.' from '.$updated.' shows.';
     }
+    public static function render_transcription_ui(){
+        $nonce = wp_create_nonce('aipex_transcription');
+        $scan  = get_option(Aipex_Podcast_Transcription::SCAN_OPTION, []);
+        ?>
+        <div id="aipex-trans-wrap" style="max-width:760px">
+        <?php if (!Aipex_Podcast_Transcription::assemblyai_key() || !Aipex_Podcast_Transcription::anthropic_key()): ?>
+            <div class="notice notice-warning inline"><p>AssemblyAI and/or Anthropic keys not set. Go to <a href="<?php echo esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')); ?>">Settings → AI & Transcription</a>.</p></div>
+        <?php else: ?>
+        <p>
+            <button type="button" class="button" id="aipex-trans-scan">Scan Episodes</button>
+            <span id="aipex-trans-scan-result" style="margin-left:10px;color:#646970">
+            <?php if (!empty($scan['scanned_at'])): ?>
+                Last scanned: <?php echo esc_html($scan['scanned_at']); ?> —
+                ✓ Complete: <?php echo (int)($scan['complete']??0); ?> &nbsp;
+                🤖 Needs AI content: <?php echo (int)($scan['ai_only']??0); ?> &nbsp;
+                🎙 Needs transcription: <?php echo (int)($scan['transcribe']??0); ?> &nbsp;
+                ✗ No source: <?php echo (int)($scan['no_source']??0); ?> &nbsp;
+                Est. cost: £<?php echo esc_html($scan['est_cost_gbp']??'0'); ?> (Dropbox/upload only)
+            <?php endif; ?>
+            </span>
+        </p>
+
+        <h4 style="margin:16px 0 8px">Batch: AI Content Only (has transcript, needs summary/points/tags)</h4>
+        <p><button type="button" class="button button-primary" id="aipex-batch-ai-start" <?php echo empty($scan['ai_only']) ? 'disabled' : ''; ?>>
+            Start AI Content Batch <?php echo !empty($scan['ai_only']) ? '('.(int)$scan['ai_only'].' episodes)' : ''; ?>
+        </button>
+        <button type="button" class="button" id="aipex-batch-ai-stop" style="display:none">Stop</button>
+        <span id="aipex-batch-ai-status" style="margin-left:10px;color:#646970"></span></p>
+        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-ai-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
+        <pre id="aipex-batch-ai-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+
+        <h4 style="margin:16px 0 8px">Batch: Full Transcription (Dropbox/upload audio → AssemblyAI → Claude)</h4>
+        <p style="color:#646970;font-size:13px">Note: SoundCloud-only episodes require the SoundCloud OAuth connection to be active first.</p>
+        <p><button type="button" class="button button-primary" id="aipex-batch-tr-start" <?php echo empty($scan['transcribe']) ? 'disabled' : ''; ?>>
+            Start Transcription Batch <?php echo !empty($scan['transcribe']) ? '('.(int)$scan['transcribe'].' episodes, est. £'.($scan['est_cost_gbp']??'?').')' : ''; ?>
+        </button>
+        <button type="button" class="button" id="aipex-batch-tr-stop" style="display:none">Stop</button>
+        <span id="aipex-batch-tr-status" style="margin-left:10px;color:#646970"></span></p>
+        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-tr-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
+        <pre id="aipex-batch-tr-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+        <?php endif; ?>
+        </div>
+        <script>
+        jQuery(function($){
+            var n=<?php echo wp_json_encode($nonce); ?>;
+            function makeLog(id){ return function(m){ var $l=$(id); $l.text($l.text()?$l.text()+'\n'+m:m); $l.scrollTop($l[0].scrollHeight); }; }
+
+            // Scan
+            $('#aipex-trans-scan').on('click',function(){
+                var $b=$(this); $b.prop('disabled',true);
+                $('#aipex-trans-scan-result').text('Scanning…');
+                $.post(ajaxurl,{action:'aipex_transcription_scan',nonce:n},function(resp){
+                    $b.prop('disabled',false);
+                    if(resp&&resp.success){
+                        var d=resp.data;
+                        $('#aipex-trans-scan-result').text('✓ Complete: '+d.complete+' | 🤖 AI only: '+d.ai_only+' | 🎙 Transcribe: '+d.transcribe+' | ✗ No source: '+d.no_source+' | Est. cost: £'+d.est_cost_gbp);
+                        if(d.ai_only>0) $('#aipex-batch-ai-start').prop('disabled',false).text('Start AI Content Batch ('+d.ai_only+' episodes)');
+                        if(d.transcribe>0) $('#aipex-batch-tr-start').prop('disabled',false).text('Start Transcription Batch ('+d.transcribe+' episodes, est. £'+d.est_cost_gbp+')');
+                    } else $('#aipex-trans-scan-result').text('Scan failed.');
+                }).fail(function(){ $b.prop('disabled',false); });
+            });
+
+            // Generic batch runner
+            function runBatch(type,startBtn,stopBtn,barId,logId,statusId){
+                var running=false, log=makeLog(logId);
+                function step(action){
+                    if(!running) return;
+                    $.post(ajaxurl,{action:action,nonce:n,batch_type:type},function(resp){
+                        if(!resp||!resp.success){ running=false; $(startBtn).prop('disabled',false); $(stopBtn).hide(); log('ERROR: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed')); return; }
+                        var d=resp.data;
+                        $(barId).css('width',(d.pct||0)+'%');
+                        $.each(d.log||[],function(_,l){ log(l); });
+                        $(statusId).text(d.done+'/'+d.total+' done, '+d.failed+' failed');
+                        if(d.finished){ running=false; $(startBtn).prop('disabled',false); $(stopBtn).hide(); $(barId).css('width','100%'); $(statusId).text('Complete.'); }
+                        else setTimeout(function(){ step('aipex_batch_continue'); },500);
+                    }).fail(function(xhr){ running=false; $(startBtn).prop('disabled',false); $(stopBtn).hide(); log('HTTP '+xhr.status); });
+                }
+                $(startBtn).on('click',function(){
+                    running=true; $(logId).text(''); $(barId).css('width','0%'); $(this).prop('disabled',true); $(stopBtn).show();
+                    step('aipex_batch_start');
+                });
+                $(stopBtn).on('click',function(){ running=false; $(this).hide(); $(startBtn).prop('disabled',false); $(statusId).text('Stopped.'); });
+            }
+            runBatch('ai_only','#aipex-batch-ai-start','#aipex-batch-ai-stop','#aipex-batch-ai-bar','#aipex-batch-ai-log','#aipex-batch-ai-status');
+            runBatch('transcribe','#aipex-batch-tr-start','#aipex-batch-tr-stop','#aipex-batch-tr-bar','#aipex-batch-tr-log','#aipex-batch-tr-status');
+        });
+        </script>
+        <?php
+    }
+
+    public static function render_migration_ui(){
+        $nonce = wp_create_nonce('aipex_transcription');
+        ?>
+        <div id="aipex-migrate-wrap" style="max-width:700px">
+        <p>
+            <button type="button" class="button button-primary" id="aipex-migrate-start">Start Migration</button>
+            <button type="button" class="button" id="aipex-migrate-stop" style="display:none">Stop</button>
+            <span id="aipex-migrate-status" style="margin-left:10px;color:#646970"></span>
+        </p>
+        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-migrate-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
+        <pre id="aipex-migrate-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+        </div>
+        <script>
+        jQuery(function($){
+            var n=<?php echo wp_json_encode($nonce); ?>, running=false, offset=0;
+            function log(m){ var $l=$('#aipex-migrate-log'); $l.text($l.text()?$l.text()+'\n'+m:m); $l.scrollTop($l[0].scrollHeight); }
+            function step(){
+                if(!running) return;
+                $.post(ajaxurl,{action:'aipex_migrate_summaries',nonce:n,offset:offset},function(resp){
+                    if(!resp||!resp.success){ running=false; $('#aipex-migrate-start').prop('disabled',false); $('#aipex-migrate-stop').hide(); log('Failed.'); return; }
+                    var d=resp.data;
+                    $('#aipex-migrate-bar').css('width',(d.pct||0)+'%');
+                    $.each(d.log||[],function(_,l){ log(l); });
+                    $('#aipex-migrate-status').text('Offset '+d.offset+'/'+d.total+' — migrated: '+d.migrated+', skipped: '+d.skipped);
+                    offset=d.offset;
+                    if(d.finished){ running=false; $('#aipex-migrate-start').prop('disabled',false); $('#aipex-migrate-stop').hide(); $('#aipex-migrate-bar').css('width','100%'); $('#aipex-migrate-status').text('Migration complete.'); }
+                    else setTimeout(step, 200);
+                }).fail(function(){ running=false; $('#aipex-migrate-start').prop('disabled',false); log('HTTP error'); });
+            }
+            $('#aipex-migrate-start').on('click',function(){ running=true; offset=0; $('#aipex-migrate-log').text(''); $(this).prop('disabled',true); $('#aipex-migrate-stop').show(); step(); });
+            $('#aipex-migrate-stop').on('click',function(){ running=false; $(this).hide(); $('#aipex-migrate-start').prop('disabled',false); });
+        });
+        </script>
+        <?php
+    }
+
+    /** "Generate AI Content" button shown on episode edit screen */
+    public static function episode_ai_button(){
+        global $post;
+        if (!$post || $post->post_type !== 'aipex_podcast') return;
+        $status    = Aipex_Podcast_Fields::get('ai_status', $post->ID) ?: 'none';
+        $nonce     = wp_create_nonce('aipex_transcription');
+        $badge_map = ['complete'=>'complete','processing'=>'processing','pending'=>'pending','failed'=>'failed','none'=>'none'];
+        $badge     = $badge_map[$status] ?? 'none';
+        $label_map = ['complete'=>'✓ AI Complete','processing'=>'⏳ Processing…','pending'=>'⏳ Pending','failed'=>'✗ Failed','none'=>'Not processed'];
+        echo '<div class="postbox" style="margin-top:12px"><div class="postbox-header"><h2>AI Content</h2></div><div class="inside">';
+        echo '<p><span class="aipex-ai-status '.esc_attr($badge).'">'.esc_html($label_map[$status]).'</span></p>';
+        if (in_array($status,['none','failed','ai_only'])) {
+            echo '<p><button type="button" class="button button-primary" id="aipex-gen-ai" data-post-id="'.esc_attr($post->ID).'" data-nonce="'.esc_attr($nonce).'">Generate AI Content</button> <span id="aipex-gen-ai-status" style="margin-left:8px;color:#646970"></span></p>';
+        }
+        if ($status === 'processing') echo '<p style="color:#646970;font-size:13px">Transcription job submitted — checking every 3 minutes automatically.</p>';
+        if ($status === 'failed') {
+            $err = get_post_meta($post->ID,'ai_error',true);
+            if ($err) echo '<p style="color:#b91c1c;font-size:13px">Error: '.esc_html($err).'</p>';
+        }
+        echo '</div></div>';
+        ?>
+        <script>
+        jQuery(function($){
+            $('#aipex-gen-ai').on('click',function(){
+                var $b=$(this),post_id=$b.data('post-id'),nonce=$b.data('nonce');
+                $b.prop('disabled',true); $('#aipex-gen-ai-status').text('Processing…');
+                $.post(ajaxurl,{action:'aipex_process_episode',nonce:nonce,post_id:post_id},function(resp){
+                    $b.prop('disabled',false);
+                    if(resp&&resp.success) $('#aipex-gen-ai-status').css('color','green').text('✓ '+resp.data.message);
+                    else $('#aipex-gen-ai-status').css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
+                }).fail(function(xhr){ $b.prop('disabled',false); $('#aipex-gen-ai-status').css('color','red').text('HTTP '+xhr.status); });
+            });
+        });
+        </script>
+        <?php
+    }
+
     public static function render_rel_sync_ui(){
         $nonce = wp_create_nonce('aipex_rel_sync');
         ?>

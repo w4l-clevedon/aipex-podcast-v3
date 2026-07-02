@@ -66,15 +66,21 @@ class Aipex_Podcast_Fields {
         // alone and silently falls back to raw postmeta — which means the
         // value never appears in the ACF field widget on the edit screen.
         $field_keys = [
-            'series'         => 'field_series',
-            'presenters'     => 'field_presenters',
-            'guests'         => 'field_guests',
-            'sponsors'       => 'field_sponsors',
-            'series_sponsors'=> 'field_series_sponsors',
-            'duration'       => 'field_duration',
-            'soundcloud_url' => 'field_soundcloud_url',
-            'dropbox_url'    => 'field_dropbox_url',
-            'episode_number' => 'field_episode_number',
+            'series'           => 'field_series',
+            'presenters'       => 'field_presenters',
+            'guests'           => 'field_guests',
+            'sponsors'         => 'field_sponsors',
+            'series_sponsors'  => 'field_series_sponsors',
+            'duration'         => 'field_duration',
+            'soundcloud_url'   => 'field_soundcloud_url',
+            'dropbox_url'      => 'field_dropbox_url',
+            'episode_number'   => 'field_episode_number',
+            'transcript'       => 'field_transcript',
+            'ai_status'        => 'field_ai_status',
+            'ai_job_id'        => 'field_ai_job_id',
+            'main_points'      => 'field_main_points',
+            'ai_credits'       => 'field_ai_credits',
+            'legacy_presenter' => 'field_legacy_presenter',
         ];
 
         $updated = false;

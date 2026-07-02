@@ -200,3 +200,20 @@ jQuery(function($){
       $btn.prop('disabled',false);
     }).fail(function(){ $btn.prop('disabled',false); });
   });
+
+  // Transcript copy button
+  $(document).on('click','.aipex-ts-copy',function(){
+    var text=$('#'+$(this).data('uid')+' .aipex-ts-body').text();
+    navigator.clipboard.writeText(text).then(function(){ }).catch(function(){});
+    var $b=$(this); $b.text('✓ Copied!'); setTimeout(function(){ $b.text('📋 Copy transcript'); },2000);
+  });
+
+  // Transcript download button
+  $(document).on('click','.aipex-ts-download',function(){
+    var text=$('#'+$(this).data('uid')+' .aipex-ts-body').text();
+    var title=$(this).data('title')||'transcript';
+    var blob=new Blob([text],{type:'text/plain'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=title.replace(/[^a-z0-9]/gi,'-').toLowerCase()+'.txt';
+    a.click(); URL.revokeObjectURL(a.href);
+  });

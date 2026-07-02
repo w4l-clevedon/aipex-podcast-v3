@@ -10,6 +10,7 @@ class Aipex_Podcast_Core {
         add_action('admin_menu', ['Aipex_Podcast_Settings','menu'], 31);
         add_action('admin_init', ['Aipex_Podcast_Admin','handle_actions']);
         add_action('admin_init', ['Aipex_Podcast_Settings','handle_save']);
+        add_action('add_meta_boxes_aipex_podcast', function(){ add_meta_box('aipex-ai-content','AI Content','Aipex_Podcast_Admin::episode_ai_button','aipex_podcast','side','high'); });
         add_action('admin_init', ['Aipex_Podcast_Dropbox','handle_actions']);
         add_action('rest_api_init', ['Aipex_Podcast_Dropbox','register_rest_routes']);
         add_action('wp_enqueue_scripts', ['Aipex_Podcast_Core','assets']);
@@ -29,6 +30,19 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_csv_match_start',   ['Aipex_Podcast_CSV_Importer','ajax_match_start']);
         add_action('wp_ajax_aipex_csv_match_batch',   ['Aipex_Podcast_CSV_Importer','ajax_match_batch']);
         add_action('wp_ajax_aipex_csv_create_draft',  ['Aipex_Podcast_CSV_Importer','ajax_create_draft']);
+        // Transcription pipeline
+        add_action('wp_ajax_aipex_transcription_scan',    ['Aipex_Podcast_Transcription','ajax_scan']);
+        add_action('wp_ajax_aipex_batch_start',           ['Aipex_Podcast_Transcription','ajax_batch_start']);
+        add_action('wp_ajax_aipex_batch_continue',        ['Aipex_Podcast_Transcription','ajax_batch_continue']);
+        add_action('wp_ajax_aipex_process_episode',       ['Aipex_Podcast_Transcription','ajax_process_episode']);
+        add_action('wp_ajax_aipex_migrate_summaries',     ['Aipex_Podcast_Transcription','ajax_migrate_summaries']);
+        // Cron
+        add_filter('cron_schedules',                  ['Aipex_Podcast_Transcription','register_cron_interval']);
+        add_action(Aipex_Podcast_Transcription::CRON_HOOK, ['Aipex_Podcast_Transcription','poll_pending_jobs']);
+        // WooCommerce credits
+        add_action('woocommerce_order_status_completed', ['Aipex_Podcast_Transcription','woo_order_complete']);
+        // Episode header shortcode
+        Aipex_Podcast_Episode_Header::register();
         add_action('admin_init',                       ['Aipex_Podcast_Soundcloud','handle_oauth_callback']);
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);

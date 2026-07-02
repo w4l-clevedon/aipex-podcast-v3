@@ -16,8 +16,14 @@ class Aipex_Podcast_ACF {
                 ['key'=>'field_main_point_text','label'=>'Point','name'=>'point','type'=>'text'],
                 ['key'=>'field_main_point_desc','label'=>'Description','name'=>'description','type'=>'textarea','rows'=>2]
             ]],
-            ['key'=>'field_transcript','label'=>'Transcript','name'=>'transcript','type'=>'wysiwyg','tabs'=>'text','toolbar'=>'basic'],
-            ['key'=>'field_ai_summary','label'=>'AI Summary','name'=>'ai_summary','type'=>'textarea'],
+            ['key'=>'field_transcript','label'=>'Transcript','name'=>'transcript','type'=>'textarea','rows'=>20],
+            ['key'=>'field_ai_status','label'=>'AI Content Status','name'=>'ai_status','type'=>'select','choices'=>[''=>'Not processed','pending'=>'Pending','processing'=>'Processing','complete'=>'Complete','failed'=>'Failed'],'default_value'=>''],
+            ['key'=>'field_ai_job_id','label'=>'AssemblyAI Job ID','name'=>'ai_job_id','type'=>'text'],
+            ['key'=>'field_episode_materials','label'=>'Episode Materials','name'=>'episode_materials','type'=>'repeater','button_label'=>'Add Material','sub_fields'=>[
+                ['key'=>'field_material_label','label'=>'Label','name'=>'material_label','type'=>'text','placeholder'=>'e.g. Download Support Resources Guide'],
+                ['key'=>'field_material_url','label'=>'External URL','name'=>'material_url','type'=>'url','placeholder'=>'https://...'],
+                ['key'=>'field_material_file','label'=>'File Upload','name'=>'material_file','type'=>'file','return_format'=>'url','instructions'=>'If both URL and file are set, file takes priority'],
+            ]],
             ['key'=>'field_series','label'=>'Series','name'=>'series','type'=>'relationship','post_type'=>['aipex_series'],'return_format'=>'id','max'=>1],
             ['key'=>'field_presenters','label'=>'Presenters','name'=>'presenters','type'=>'relationship','post_type'=>['aipex_presenter'],'return_format'=>'id'],
             ['key'=>'field_guests','label'=>'Guests','name'=>'guests','type'=>'relationship','post_type'=>['aipex_guest'],'return_format'=>'id'],
@@ -40,6 +46,8 @@ class Aipex_Podcast_ACF {
             ['key'=>'field_presenter_website','label'=>'Website','name'=>'website','type'=>'url'],['key'=>'field_presenter_facebook','label'=>'Facebook','name'=>'facebook','type'=>'url'],['key'=>'field_presenter_x','label'=>'X','name'=>'x_url','type'=>'url'],['key'=>'field_presenter_instagram','label'=>'Instagram','name'=>'instagram','type'=>'url'],['key'=>'field_presenter_tiktok','label'=>'TikTok','name'=>'tiktok','type'=>'url'],['key'=>'field_presenter_pinterest','label'=>'Pinterest','name'=>'pinterest','type'=>'url'],['key'=>'field_presenter_linkedin','label'=>'LinkedIn','name'=>'linkedin','type'=>'url'],['key'=>'field_presenter_soundcloud','label'=>'SoundCloud','name'=>'soundcloud','type'=>'url'],['key'=>'field_presenter_phone','label'=>'Contact Number','name'=>'contact_number','type'=>'text'],['key'=>'field_presenter_email','label'=>'Contact Email','name'=>'contact_email','type'=>'email'],
             ['key'=>'field_presenter_rss_url','label'=>'RSS URL','name'=>'rss_url','type'=>'url'],['key'=>'field_presenter_spotify_url','label'=>'Spotify URL','name'=>'spotify_url','type'=>'url'],['key'=>'field_presenter_apple_url','label'=>'Apple Podcasts URL','name'=>'apple_url','type'=>'url'],['key'=>'field_presenter_youtube_url','label'=>'YouTube URL','name'=>'youtube_url','type'=>'url'],['key'=>'field_presenter_amazon_url','label'=>'Amazon URL','name'=>'amazon_url','type'=>'url'],['key'=>'field_presenter_pocketcasts_url','label'=>'Pocket Casts URL','name'=>'pocketcasts_url','type'=>'url'],
             ['key'=>'field_presenter_user','label'=>'Linked WordPress/BuddyPress User','name'=>'linked_user','type'=>'user','return_format'=>'id'],
+            ['key'=>'field_legacy_presenter','label'=>'Legacy Presenter (free AI credits)','name'=>'legacy_presenter','type'=>'true_false','ui'=>1,'instructions'=>'Tick for existing WRS presenters — they consume zero AI credits'],
+            ['key'=>'field_ai_credits','label'=>'AI Credits Balance','name'=>'ai_credits','type'=>'number','default_value'=>0,'min'=>0,'instructions'=>'Credits available for transcription & AI content generation'],
         ],'location'=>[[['param'=>'post_type','operator'=>'==','value'=>'aipex_presenter']]]]);
     }
 }

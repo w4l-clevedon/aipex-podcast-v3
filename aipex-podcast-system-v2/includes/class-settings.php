@@ -45,6 +45,9 @@ class Aipex_Podcast_Settings {
             delete_transient('aipex_sc_access_token');
         }
 
+        if(!empty($_POST['assemblyai_key'])) update_option('aipex_assemblyai_key', Aipex_Podcast_Crypto::encrypt(sanitize_text_field(wp_unslash($_POST['assemblyai_key']))), false);
+        if(!empty($_POST['anthropic_key'])) update_option('aipex_anthropic_key', Aipex_Podcast_Crypto::encrypt(sanitize_text_field(wp_unslash($_POST['anthropic_key']))), false);
+
         set_transient('aipex_admin_notice','Settings saved.',60);
         wp_safe_redirect(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings'));
         exit;
@@ -66,6 +69,14 @@ class Aipex_Podcast_Settings {
         echo '<tr><th><label for="sc_client_id">Client ID</label></th><td><input type="password" id="sc_client_id" name="sc_client_id" value="" class="regular-text" autocomplete="new-password" placeholder="'.($sc_set?'(saved — paste to update)':'Enter Client ID').'"></td></tr>';
         echo '<tr><th><label for="sc_client_secret">Client Secret</label></th><td><input type="password" id="sc_client_secret" name="sc_client_secret" value="" class="regular-text" autocomplete="new-password" placeholder="'.($sc_secret_set?'(saved — paste to update)':'Enter Client Secret').'"></td></tr>';
         echo '<tr><th><label for="sc_username">Username</label></th><td><input type="text" id="sc_username" name="sc_username" value="'.esc_attr($sc_username).'" class="regular-text" placeholder="womensradiostation"><p class="description">The part after soundcloud.com/ on your profile page.</p></td></tr>';
+        echo '</table>';
+        echo '<h2>AI &amp; Transcription</h2>';
+        echo '<p>Used for automatic transcription (AssemblyAI) and AI content generation — summary, key points, tags (Anthropic Claude). Both stored encrypted.</p>';
+        $aai_set = (bool)get_option('aipex_assemblyai_key','');
+        $ant_set = (bool)get_option('aipex_anthropic_key','');
+        echo '<table class="form-table">';
+        echo '<tr><th><label for="assemblyai_key">AssemblyAI API Key</label></th><td><input type="password" id="assemblyai_key" name="assemblyai_key" value="" class="regular-text" autocomplete="new-password" placeholder="'.($aai_set?'(saved — paste to update)':'Enter AssemblyAI API Key').'"></td></tr>';
+        echo '<tr><th><label for="anthropic_key">Anthropic API Key</label></th><td><input type="password" id="anthropic_key" name="anthropic_key" value="" class="regular-text" autocomplete="new-password" placeholder="'.($ant_set?'(saved — paste to update)':'Enter Anthropic API Key').'"></td></tr>';
         echo '</table>';
         echo '<p><button class="button button-primary" name="aipex_save_settings" value="1">Save Settings</button></p>';
         echo '</form></div>';

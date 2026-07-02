@@ -159,7 +159,23 @@ class Aipex_Podcast_Shortcodes {
 
     public static function aipex_podcast_summary(){ $v=Aipex_Podcast_Fields::field('episode_summary'); return $v?'<div class="aipex-summary">'.wp_kses_post($v).'</div>':''; }
     public static function aipex_podcast_main_points(){ $rows=Aipex_Podcast_Fields::field('main_points',null,[]); if(!$rows)return ''; $out='<ul class="aipex-main-points">'; foreach($rows as $r){ $p=is_array($r)?($r['point']??reset($r)):$r; if($p)$out.='<li>'.esc_html($p).'</li>'; } return $out.'</ul>'; }
-    public static function aipex_podcast_transcript(){ $v=Aipex_Podcast_Fields::field('transcript'); return $v?'<div class="aipex-transcript">'.wp_kses_post($v).'</div>':''; }
+    public static function aipex_podcast_transcript($atts=[]){
+        $id = get_the_ID();
+        $v  = Aipex_Podcast_Fields::field('transcript', $id);
+        if (!$v) return '';
+        self::enqueue();
+        $plain   = wp_strip_all_tags($v);
+        $preview = mb_substr($plain, 0, 120).(mb_strlen($plain) > 120 ? '\xe2\x80\xa6' : '');
+        $uid     = 'aipex-ts-'.absint($id);
+        $out  = '<details class="aipex-transcript-details" id="'.esc_attr($uid).'">';
+        $out .= '<summary>\xf0\x9f\x93\x84 Full Transcript<span class="aipex-ts-preview">'.esc_html($preview).'</span><span class="aipex-ts-caret">\xe2\x8c\x84</span></summary>';
+        $out .= '<div class="aipex-ts-body">'.esc_html($plain).'</div>';
+        $out .= '<div class="aipex-ts-actions">';
+        $out .= '<button type="button" class="aipex-ts-btn aipex-ts-copy" data-uid="'.esc_attr($uid).'">\xf0\x9f\x93\x8b Copy transcript</button>';
+        $out .= '<button type="button" class="aipex-ts-btn aipex-ts-download" data-title="'.esc_attr(get_the_title($id)).'" data-uid="'.esc_attr($uid).'">\xe2\xac\x87 Download .txt</button>';
+        $out .= '</div></details>';
+        return $out;
+    }
 
     public static function aipex_series_grid($atts=[]){ $a=shortcode_atts(['limit'=>12],$atts); return self::post_grid('aipex_series',(int)$a['limit'],'show'); }
     public static function aipex_presenter_grid($atts=[]){ $a=shortcode_atts(['limit'=>12],$atts); return self::post_grid('aipex_presenter',(int)$a['limit'],'presenter'); }
