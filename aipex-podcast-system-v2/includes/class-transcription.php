@@ -123,7 +123,10 @@ class Aipex_Podcast_Transcription {
 
         // SoundCloud stream URL requires OAuth token
         $sc_url = Aipex_Podcast_Fields::get('soundcloud_url', $post_id);
-        if ($sc_url && class_exists('Aipex_Podcast_Soundcloud') && Aipex_Podcast_Soundcloud::is_connected()) {
+        if ($sc_url) {
+            if (!class_exists('Aipex_Podcast_Soundcloud') || !Aipex_Podcast_Soundcloud::is_connected()) {
+                return '__sc_not_connected__'; // sentinel so caller can give specific error
+            }
             return self::resolve_sc_stream_url($sc_url);
         }
 
@@ -163,6 +166,7 @@ class Aipex_Podcast_Transcription {
 
         $audio_url = self::get_audio_url($post_id);
         if (!$audio_url) return ['error' => 'No audio source found for this episode.'];
+        if ($audio_url === '__sc_not_connected__') return ['error' => 'SoundCloud not connected — go to Tools & Scanners and reconnect SoundCloud first.'];
 
         $r = self::curl_request('POST', 'https://api.assemblyai.com/v2/transcript',
             ['Authorization' => $key, 'Content-Type' => 'application/json'],
@@ -447,10 +451,14 @@ class Aipex_Podcast_Transcription {
                 if (isset($result['error'])) { $state['failed']++; $log[] = 'FAIL: '.mb_substr($title,0,50).' — '.$result['error']; }
                 else { $state['done']++; $log[] = 'DONE: '.mb_substr($title,0,50).' ('.$result['points'].' points, '.$result['tags'].' tags)'; }
             } else {
-                $result = self::submit_transcription($post_id);
+                $sc_url  = Aipex_Podcast_Fields::get('soundcloud_url', $post_id);
+                $dbx_url = Aipex_Podcast_Fields::get('dropbox_url', $post_id);
+                $result  = self::submit_transcription($post_id);
                 if (isset($result['error'])) {
                     $state['failed']++;
-                    $log[] = 'FAIL: '.mb_substr($title,0,50).' — '.$result['error'];
+                    $log[] = 'FAIL: '.mb_substr($title,0,40)
+                        .' SC='.($sc_url?'✓':'✗').' DBX='.($dbx_url?'✓':'✗')
+                        .' — '.$result['error'];
                 } else {
                     $state['done']++;
                     $log[] = 'SUBMITTED: '.mb_substr($title,0,50).' (job: '.$result['job_id'].')';
