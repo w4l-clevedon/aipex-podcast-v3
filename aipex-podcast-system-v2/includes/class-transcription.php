@@ -65,7 +65,7 @@ class Aipex_Podcast_Transcription {
      */
     public static function scan_all(){
         $states = ['complete'=>[],'ai_only'=>[],'transcribe'=>[],'no_source'=>[]];
-        $ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'publish','posts_per_page'=>-1,'fields'=>'ids']);
+        $ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids']);
         foreach ($ids as $id) $states[self::episode_state($id)][] = $id;
 
         // Cost estimate: AssemblyAI $0.15/hr + $0.03/hr summarisation add-on
