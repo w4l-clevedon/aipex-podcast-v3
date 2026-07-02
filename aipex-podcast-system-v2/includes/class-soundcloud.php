@@ -560,6 +560,16 @@ class Aipex_Podcast_Soundcloud {
             // Auto-find the primary presenter for this series from existing episodes
             $auto_presenter_id = self::get_series_primary_presenter($series['id']);
 
+            // Check if this SC URL is already stored on any episode — if so skip entirely
+            $already_linked = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>1,'fields'=>'ids','meta_query'=>[['key'=>'soundcloud_url','value'=>$track['url'],'compare'=>'=']]]);
+            if ($already_linked) {
+                $state['skipped']++;
+                $log[] = 'ALREADY LINKED (SC URL exists): '.mb_substr($track['title'],0,50);
+                continue;
+            }
+
+            $series_title  = get_the_title($series['id']);
+            $norm_title    = self::normalize_track_title($track['title'], $series_title);
             $ep = self::best_episode_match($track['title'], $series['id']);
 
             if ($ep && $ep['score'] >= 90) {
@@ -577,9 +587,12 @@ class Aipex_Podcast_Soundcloud {
                 $state['review']++;
                 $log[] = 'REVIEW '.$ep['score'].'%: '.mb_substr($track['title'],0,50);
             } else {
+                $ep_count = count(Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series['id']));
+                $best_score = $ep ? $ep['score'] : 0;
+                $best_title = $ep ? mb_substr($ep['post']->post_title,0,30) : 'no episodes found';
                 $new_eps[] = ['track_title'=>$track['title'],'track_url'=>$track['url'],'track_created'=>$track['created']??'','series_id'=>$series['id'],'series_title'=>$series['title'],'series_score'=>$series['score'],'presenter_id'=>$auto_presenter_id];
                 $state['new_ep']++;
-                $log[] = 'NEW EP: '.mb_substr($track['title'],0,60).' → '.$series['title'];
+                $log[] = 'NEW EP ('.$best_score.'% best="'.$best_title.'" norm="'.mb_substr($norm_title,0,30).'" eps_in_show='.$ep_count.'): '.mb_substr($track['title'],0,50);
             }
         }
 
