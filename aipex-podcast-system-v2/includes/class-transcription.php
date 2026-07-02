@@ -402,11 +402,15 @@ class Aipex_Podcast_Transcription {
     public static function ajax_batch_start(){
         if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);
         check_ajax_referer('aipex_transcription','nonce');
-        $type = sanitize_key($_POST['batch_type'] ?? 'ai_only'); // 'ai_only' or 'transcribe'
+        $type  = sanitize_key($_POST['batch_type'] ?? 'ai_only');
+        $limit = max(1, min(500, (int)($_POST['batch_limit'] ?? 0))); // 0 = no limit
 
         $scan = get_option(self::SCAN_OPTION,[]);
         $ids  = $scan[$type.'_ids'] ?? [];
         if (!$ids) wp_send_json_error(['message'=>'No episodes in this category. Run the scanner first.']);
+
+        // Cap to limit if set (e.g. 50 for a test run)
+        if ($limit > 0) $ids = array_slice($ids, 0, $limit);
 
         set_transient('aipex_batch_'.$type, ['ids'=>$ids,'offset'=>0,'done'=>0,'failed'=>0,'total'=>count($ids)], 2*HOUR_IN_SECONDS);
         wp_send_json_success(self::run_batch_step($type));

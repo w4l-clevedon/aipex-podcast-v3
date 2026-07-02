@@ -563,8 +563,13 @@ class Aipex_Podcast_Admin {
 
         <h4 style="margin:16px 0 8px">Batch: Full Transcription (Dropbox/upload audio → AssemblyAI → Claude)</h4>
         <p style="color:#646970;font-size:13px">Note: SoundCloud-only episodes require the SoundCloud OAuth connection to be active first.</p>
+        <p>
+            <label style="margin-right:12px">Episodes to process:
+                <input type="number" id="aipex-batch-tr-limit" value="50" min="1" max="9999" style="width:80px;margin-left:6px"> <span style="color:#646970;font-size:12px">(set to a large number to process all)</span>
+            </label>
+        </p>
         <p><button type="button" class="button button-primary" id="aipex-batch-tr-start" <?php echo empty($scan['transcribe']) ? 'disabled' : ''; ?>>
-            Start Transcription Batch <?php echo !empty($scan['transcribe']) ? '('.(int)$scan['transcribe'].' episodes, est. £'.($scan['est_cost_gbp']??'?').')' : ''; ?>
+            Start Transcription Batch <?php echo !empty($scan['transcribe']) ? '('.(int)$scan['transcribe'].' total, est. £'.($scan['est_cost_gbp']??'?').')' : ''; ?>
         </button>
         <button type="button" class="button" id="aipex-batch-tr-stop" style="display:none">Stop</button>
         <span id="aipex-batch-tr-status" style="margin-left:10px;color:#646970"></span></p>
@@ -593,11 +598,13 @@ class Aipex_Podcast_Admin {
             });
 
             // Generic batch runner
-            function runBatch(type,startBtn,stopBtn,barId,logId,statusId){
+            function runBatch(type,startBtn,stopBtn,barId,logId,statusId,limitInputId){
                 var running=false, log=makeLog(logId);
                 function step(action){
                     if(!running) return;
-                    $.post(ajaxurl,{action:action,nonce:n,batch_type:type},function(resp){
+                    var postData={action:action,nonce:n,batch_type:type};
+                    if(action==='aipex_batch_start' && limitInputId) postData.batch_limit=parseInt($(limitInputId).val()||0,10);
+                    $.post(ajaxurl,postData,function(resp){
                         if(!resp||!resp.success){ running=false; $(startBtn).prop('disabled',false); $(stopBtn).hide(); log('ERROR: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed')); return; }
                         var d=resp.data;
                         $(barId).css('width',(d.pct||0)+'%');
@@ -613,8 +620,8 @@ class Aipex_Podcast_Admin {
                 });
                 $(stopBtn).on('click',function(){ running=false; $(this).hide(); $(startBtn).prop('disabled',false); $(statusId).text('Stopped.'); });
             }
-            runBatch('ai_only','#aipex-batch-ai-start','#aipex-batch-ai-stop','#aipex-batch-ai-bar','#aipex-batch-ai-log','#aipex-batch-ai-status');
-            runBatch('transcribe','#aipex-batch-tr-start','#aipex-batch-tr-stop','#aipex-batch-tr-bar','#aipex-batch-tr-log','#aipex-batch-tr-status');
+            runBatch('ai_only','#aipex-batch-ai-start','#aipex-batch-ai-stop','#aipex-batch-ai-bar','#aipex-batch-ai-log','#aipex-batch-ai-status',null);
+            runBatch('transcribe','#aipex-batch-tr-start','#aipex-batch-tr-stop','#aipex-batch-tr-bar','#aipex-batch-tr-log','#aipex-batch-tr-status','#aipex-batch-tr-limit');
         });
         </script>
         <?php
