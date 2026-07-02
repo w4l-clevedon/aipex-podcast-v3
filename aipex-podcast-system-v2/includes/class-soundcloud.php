@@ -209,28 +209,34 @@ class Aipex_Podcast_Soundcloud {
         return $id;
     }
 
-    public static function fetch_tracks_page($user_id, $offset = 0){
-        $r = self::api_get('https://api.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks.json?limit=200&offset='.rawurlencode((string)$offset));
+    /**
+     * Fetches one page of tracks using SoundCloud's cursor-based pagination
+     * (linked_partitioning=1). On the first call, pass $next_href=null to
+     * get the first page. Subsequent calls pass the next_href from the
+     * previous response. Returns null when the last page is reached.
+     */
+    public static function fetch_tracks_page($user_id, $next_href = null){
+        if ($next_href) {
+            // next_href already contains all params — just use it directly
+            $url = $next_href;
+        } else {
+            $url = 'https://api.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks.json?limit=200&linked_partitioning=1';
+        }
+        $r = self::api_get($url);
         if ($r['code'] === 429) return ['error'=>'rate_limit'];
         if ($r['code'] !== 200 || !is_array($r['data'])) return null;
-        // SoundCloud v1 API cycles back to the start when offset exceeds
-        // the catalogue size — detect this by checking if the first track
-        // ID matches any track we've already seen (stored in index).
-        $tracks = $r['data'];
-        if ($offset > 0 && !empty($tracks)) {
-            $index = get_option('aipex_sc_track_index', []);
-            if (!empty($index)) {
-                $seen_urls = array_flip(array_column($index, 'url'));
-                $first_url = $tracks[0]['permalink_url'] ?? '';
-                if ($first_url && isset($seen_urls[$first_url])) {
-                    // We've looped back to the start — stop pagination
-                    return ['tracks'=>[],'has_more'=>false,'looped'=>true];
-                }
-            }
+
+        // linked_partitioning wraps response in {collection:[...], next_href:...}
+        // Plain array response means the API returned tracks directly (fallback)
+        if (isset($r['data']['collection'])) {
+            $tracks   = $r['data']['collection'];
+            $next     = $r['data']['next_href'] ?? null;
+        } else {
+            $tracks   = $r['data'];
+            $next     = null; // no cursor — this is the only page
         }
-        // Also stop if we got fewer than 200 (genuine last page)
-        $has_more = count($tracks) === 200;
-        return ['tracks'=>$tracks,'has_more'=>$has_more];
+
+        return ['tracks'=>$tracks,'has_more'=>!empty($next),'next_href'=>$next];
     }
 
     // -------------------------------------------------------------------------
@@ -335,7 +341,7 @@ class Aipex_Podcast_Soundcloud {
         delete_option(self::INDEX_OPTION);
         delete_transient(self::STATE_KEY);
 
-        $state = ['user_id'=>$user_id,'offset'=>0,'fetched'=>0,'done'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'phase'=>'fetch'];
+        $state = ['user_id'=>$user_id,'next_href'=>null,'fetched'=>0,'done'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'phase'=>'fetch'];
         set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
         wp_send_json_success(array_merge(self::run_fetch_batch($state), ['log'=>['Connected. Fetching tracks from @'.self::username().'…']]));
     }
@@ -349,7 +355,7 @@ class Aipex_Podcast_Soundcloud {
     }
 
     private static function run_fetch_batch($state){
-        $page = self::fetch_tracks_page($state['user_id'], $state['offset']);
+        $page = self::fetch_tracks_page($state['user_id'], $state['next_href'] ?? null);
         $log  = [];
 
         if (isset($page['error']) && $page['error'] === 'rate_limit') {
@@ -383,9 +389,9 @@ class Aipex_Podcast_Soundcloud {
                 $index[] = ['title'=>$t['title'],'url'=>$t['permalink_url'],'created'=>$t['created_at']??''];
         }
         update_option(self::INDEX_OPTION, $index, false);
-        $state['fetched']  = count($index);
-        $state['offset']  += count($page['tracks']);
-        $log[] = 'Fetched '.count($page['tracks']).' tracks — '.count($index).' total.';
+        $state['fetched']   = count($index);
+        $state['next_href'] = $page['next_href'] ?? null;
+        $log[] = 'Fetched '.count($page['tracks']).' tracks — '.count($index).' total.'.(!empty($state['next_href'])?' (more to fetch)':' (last page)');
 
         if (!$page['has_more']) {
             $state['phase'] = 'match'; $state['match_offset'] = 0; $state['match_total'] = count($index);
