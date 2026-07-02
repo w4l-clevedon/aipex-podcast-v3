@@ -243,12 +243,28 @@ class Aipex_Podcast_Soundcloud {
         $log[] = 'Username: '.self::username();
 
         delete_transient('aipex_sc_user_id');
-        $r = self::api_get('https://api.soundcloud.com/resolve.json?url='.rawurlencode('https://soundcloud.com/'.self::username()));
-        $log[] = 'Resolve → HTTP '.$r['code'];
+        $log[] = 'cURL available: '.(function_exists('curl_init')?'yes':'no');
+        $log[] = 'Stored auth prefix: '.get_option('aipex_sc_auth_prefix','OAuth (default)');
 
-        if ($r['code'] === 429) wp_send_json_error(['message'=>'Rate limited — wait 60 seconds and try again.','log'=>$log]);
+        // Test each prefix explicitly so we can see which one SoundCloud accepts
+        $resolve_url = 'https://api.soundcloud.com/resolve.json?url='.rawurlencode('https://soundcloud.com/'.self::username()).'&client_id='.rawurlencode(self::client_id());
+        foreach (['OAuth','Bearer'] as $prefix) {
+            if (function_exists('curl_init')) {
+                $ch = curl_init($resolve_url);
+                curl_setopt_array($ch,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>10,CURLOPT_HTTPHEADER=>['Authorization: '.$prefix.' '.self::access_token(),'User-Agent: Aipex/1.0'],CURLOPT_FOLLOWLOCATION=>true,CURLOPT_SSL_VERIFYPEER=>true]);
+                $body = (string)curl_exec($ch);
+                $code = (int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
+                $curl_err = curl_error($ch);
+                curl_close($ch);
+                $log[] = 'cURL '.$prefix.' → HTTP '.$code.($curl_err?' [curl err: '.$curl_err.']':'');
+                if ($code === 200) { $r = ['code'=>200,'data'=>json_decode($body,true),'body'=>$body]; update_option('aipex_sc_auth_prefix',$prefix,false); break; }
+                $log[] = 'Body: '.substr($body,0,120);
+            }
+        }
+        if (!isset($r)) $r = self::api_get($resolve_url);
+
+        if ($r['code'] === 429) wp_send_json_error(['message'=>'Rate limited — wait 60 seconds.','log'=>$log]);
         if ($r['code'] !== 200 || empty($r['data']['id'])) {
-            $log[] = 'Body: '.substr($r['body'],0,300);
             wp_send_json_error(['message'=>'Resolve failed — HTTP '.$r['code'].'. See log.','log'=>$log]);
         }
 
@@ -466,7 +482,7 @@ class Aipex_Podcast_Soundcloud {
             <button type="button" class="button" id="aipex-sc-test">Test Connection</button>
             <span id="aipex-sc-test-result" style="margin-left:10px;font-style:italic;color:#646970"></span>
         </p>
-        <pre id="aipex-sc-test-log" style="display:none;background:#f6f7f7;padding:10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:12px;margin-top:6px"></pre>
+        <pre id="aipex-sc-test-log" style="display:none;background:#f6f7f7;padding:10px;max-height:400px;overflow-y:auto;white-space:pre-wrap;font-size:12px;margin-top:6px;word-break:break-all"></pre>
         <p style="margin-top:12px">
             <button type="button" class="button button-primary" id="aipex-sc-start">Start Import</button>
             <button type="button" class="button" id="aipex-sc-stop" style="display:none">Stop</button>
