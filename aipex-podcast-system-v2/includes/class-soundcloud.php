@@ -637,6 +637,31 @@ class Aipex_Podcast_Soundcloud {
         wp_send_json_success(['post_id'=>$post_id,'edit_url'=>get_edit_post_link($post_id,'raw'),'title'=>$item['track_title']]);
     }
 
+    /** Export the full SC track index to a CSV download. */
+    public static function ajax_export_index(){
+        if (!current_user_can('manage_options')) wp_die('Permission denied.');
+        check_ajax_referer('aipex_sc_export','nonce');
+
+        $index = get_option(self::INDEX_OPTION, []);
+        if (!$index) wp_die('No track index found. Run the SoundCloud importer first to fetch the track list.');
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="soundcloud-tracks-'.date('Y-m-d').'.csv"');
+        header('Pragma: no-cache');
+
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['Track Title', 'SoundCloud URL', 'Created']);
+        foreach ($index as $track) {
+            fputcsv($out, [
+                $track['title']   ?? '',
+                $track['url']     ?? '',
+                $track['created'] ?? '',
+            ]);
+        }
+        fclose($out);
+        exit;
+    }
+
     /** Batch-creates all new episode candidates as drafts in one go. */
     public static function ajax_create_all_drafts(){
         if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);

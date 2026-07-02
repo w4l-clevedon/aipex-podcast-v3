@@ -298,6 +298,11 @@ class Aipex_Podcast_Admin {
         echo '<form method="post">'; wp_nonce_field('aipex_tools');
         echo '<h2>SoundCloud Track Importer</h2>';
         echo '<p>Fetches all tracks from the configured SoundCloud account, matches them to episodes by title, and stores the SoundCloud URL on each episode. The audio player will then use the SoundCloud embed instead of Dropbox. Credentials are set in <a href="'.esc_url(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings')).'">Settings</a>.</p>';
+        $index_count = count(get_option(Aipex_Podcast_Soundcloud::INDEX_OPTION, []));
+        if ($index_count) {
+            $export_url = wp_nonce_url(admin_url('admin-post.php?action=aipex_sc_export_index'), 'aipex_sc_export', 'nonce');
+            echo '<p><a href="'.esc_url($export_url).'" class="button">⬇ Download Track List CSV ('.$index_count.' tracks)</a> <span style="color:#646970;font-size:13px">Title, SoundCloud URL, Created date — use with scdl or youtube-dl to bulk download</span></p>';
+        }
         Aipex_Podcast_Soundcloud::render_ui();
         echo '<h2>Episode → Show Matcher</h2>';
         echo '<p>Scans episodes that have no show assigned and matches them against show titles using the episode title. Episodes where the show name appears in the episode title will match confidently (e.g. "All Things Autism – Guest Name" → <em>All Things Autism</em>).</p>';
