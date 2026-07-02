@@ -147,6 +147,13 @@ class Aipex_Podcast_Soundcloud {
             $url .= (strpos($url, '?') !== false ? '&' : '?').'client_id='.rawurlencode($client_id);
         }
 
+        // Use direct cURL to bypass WordPress HTTP API which strips the
+        // Authorization header on some Plesk/cPanel server configurations.
+        if (function_exists('curl_init')) {
+            return self::curl_get($url, $token);
+        }
+
+        // Fallback: wp_remote_get
         $response = wp_remote_get($url, [
             'timeout'    => 15,
             'headers'    => ['Authorization' => 'OAuth '.$token],
@@ -155,7 +162,39 @@ class Aipex_Podcast_Soundcloud {
         if (is_wp_error($response)) return ['code'=>0,'error'=>$response->get_error_message(),'data'=>null,'body'=>''];
         $code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
-        return ['code'=>$code,'data'=>json_decode($body, true),'body'=>$body,'error'=>''];
+        return ['code'=>$code,'data'=>json_decode($body,true),'body'=>$body,'error'=>''];
+    }
+
+    /**
+     * Direct cURL — bypasses WordPress HTTP layer which strips Authorization
+     * headers on some Plesk/cPanel hosting configurations.
+     * Tries OAuth prefix first, then Bearer if that returns 401.
+     */
+    private static function curl_get($url, $token){
+        $prefix = get_option('aipex_sc_auth_prefix', 'OAuth');
+        $prefixes = ($prefix === 'OAuth') ? ['OAuth', 'Bearer'] : ['Bearer', 'OAuth'];
+        $last_body = ''; $last_code = 0;
+        foreach ($prefixes as $p) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 15,
+                CURLOPT_HTTPHEADER     => [
+                    'Authorization: '.$p.' '.$token,
+                    'User-Agent: Aipex Podcast System/1.0',
+                ],
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+            $last_body = (string)curl_exec($ch);
+            $last_code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($last_code !== 401) {
+                if ($p !== get_option('aipex_sc_auth_prefix','OAuth')) update_option('aipex_sc_auth_prefix', $p, false);
+                return ['code'=>$last_code,'data'=>json_decode($last_body,true),'body'=>$last_body,'error'=>''];
+            }
+        }
+        return ['code'=>$last_code,'data'=>json_decode($last_body,true),'body'=>$last_body,'error'=>'Both OAuth and Bearer returned 401'];
     }
 
     public static function resolve_user_id(){
