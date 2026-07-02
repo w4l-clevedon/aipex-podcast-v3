@@ -131,7 +131,18 @@ class Aipex_Podcast_Soundcloud {
     public static function disconnect(){
         delete_option('aipex_sc_access_token');
         delete_option('aipex_sc_refresh_token');
+        delete_option('aipex_sc_auth_prefix');
         delete_transient('aipex_sc_user_id');
+    }
+
+    public static function handle_disconnect(){
+        if (empty($_GET['aipex_sc_disconnect'])) return;
+        if (!current_user_can('manage_options')) return;
+        if (!wp_verify_nonce($_GET['_wpnonce'] ?? '', 'aipex_sc_disconnect')) return;
+        self::disconnect();
+        set_transient('aipex_admin_notice', 'SoundCloud disconnected. Click Connect SoundCloud to reconnect with fresh credentials.', 60);
+        wp_safe_redirect(admin_url('edit.php?post_type=aipex_podcast&page=aipex-podcast-settings'));
+        exit;
     }
 
     // -------------------------------------------------------------------------

@@ -44,7 +44,8 @@ class Aipex_Podcast_Core {
         add_action('woocommerce_order_status_completed', ['Aipex_Podcast_Transcription','woo_order_complete']);
         // Episode header shortcode
         Aipex_Podcast_Episode_Header::register();
-        add_action('admin_init',                       ['Aipex_Podcast_Soundcloud','handle_oauth_callback']);
+        add_action('admin_init', ['Aipex_Podcast_Soundcloud','handle_oauth_callback']);
+        add_action('admin_init', ['Aipex_Podcast_Soundcloud','handle_disconnect']);
         add_action('wp_ajax_aipex_dropbox_start_scan', ['Aipex_Podcast_Dropbox','ajax_start_scan']);
         add_action('wp_ajax_aipex_dropbox_continue_scan', ['Aipex_Podcast_Dropbox','ajax_continue_scan']);
         add_action('admin_init', ['Aipex_Podcast_Core','maybe_flush_rewrites']);
