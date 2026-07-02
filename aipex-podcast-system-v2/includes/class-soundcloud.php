@@ -142,10 +142,9 @@ class Aipex_Podcast_Soundcloud {
         $token = self::access_token();
         if (!$token) return ['code'=>0,'error'=>'not_connected','body'=>''];
 
-        $client_id = self::client_id();
-        if ($client_id && (strpos($url, 'client_id=') === false)) {
-            $url .= (strpos($url, '?') !== false ? '&' : '?').'client_id='.rawurlencode($client_id);
-        }
+        // Do NOT add client_id when using an OAuth token — SoundCloud
+        // treats any request with client_id in the URL as unauthenticated
+        // and ignores the Authorization header entirely.
 
         // Use direct cURL to bypass WordPress HTTP API which strips the
         // Authorization header on some Plesk/cPanel server configurations.
@@ -259,7 +258,8 @@ class Aipex_Podcast_Soundcloud {
         }
 
         // Test each prefix explicitly so we can see which one SoundCloud accepts
-        $resolve_url = 'https://api.soundcloud.com/resolve.json?url='.rawurlencode('https://soundcloud.com/'.self::username()).'&client_id='.rawurlencode(self::client_id());
+        // No client_id — OAuth token in Authorization header only
+        $resolve_url = 'https://api.soundcloud.com/resolve.json?url='.rawurlencode('https://soundcloud.com/'.self::username());
         foreach (['OAuth','Bearer'] as $prefix) {
             if (function_exists('curl_init')) {
                 $ch = curl_init($resolve_url);
