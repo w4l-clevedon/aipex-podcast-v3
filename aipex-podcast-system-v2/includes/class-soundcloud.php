@@ -64,7 +64,7 @@ class Aipex_Podcast_Soundcloud {
             'client_id'     => self::client_id(),
             'redirect_uri'  => self::redirect_uri(),
             'response_type' => 'code',
-            'scope'         => 'non-expiring',
+            'scope'         => '*',  // full access — needed for reading tracks
             'state'         => $state,
         ]);
     }
@@ -318,6 +318,16 @@ class Aipex_Podcast_Soundcloud {
         $user_id = (int)$r['data']['id'];
         set_transient('aipex_sc_user_id', $user_id, 7 * DAY_IN_SECONDS);
         $log[] = 'User ID: '.$user_id;
+
+        // Test tracks endpoint — this requires broader scope than just profile access
+        $tracks_r = self::api_get('https://api.soundcloud.com/users/'.rawurlencode((string)$user_id).'/tracks.json?limit=1&linked_partitioning=1');
+        $log[] = 'Tracks endpoint → HTTP '.$tracks_r['code'];
+        if ($tracks_r['code'] === 401) {
+            $log[] = '⚠ Tracks endpoint returned 401 — the current OAuth token does not have track access scope. Disconnect and reconnect to request broader permissions.';
+            wp_send_json_error(['message'=>'Connected but tracks access denied (401). Disconnect and reconnect SoundCloud to fix this.','log'=>$log]);
+        }
+        $track_count = is_array($tracks_r['data']['collection']??null) ? count($tracks_r['data']['collection']) : '?';
+        $log[] = 'Tracks accessible ✓ (first page: '.$track_count.' tracks)';
 
         wp_send_json_success(['user_id'=>$user_id,'username'=>self::username(),'auth'=>'OAuth access token','log'=>$log]);
     }
