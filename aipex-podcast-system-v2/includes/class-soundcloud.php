@@ -433,6 +433,24 @@ class Aipex_Podcast_Soundcloud {
     // Series + episode matching
     // -------------------------------------------------------------------------
 
+    /**
+     * Normalises a SoundCloud track title for episode matching:
+     *   - Strips 6/8-digit date codes appended to the end (e.g. " 180324", " 18032024")
+     *   - Strips the show name prefix if provided (e.g. "All Things Autism - ")
+     * Returns the cleaned title alongside the original so we can try both.
+     */
+    private static function normalize_track_title($title, $series_title = ''){
+        $t = $title;
+        // Strip trailing date codes: " 180324", " 260224", " 18032024" etc.
+        $t = preg_replace('/\s+\d{6,8}$/', '', $t);
+        // Strip "Show Name - " or "Show Name – " prefix (case-insensitive)
+        if ($series_title) {
+            $pat = '/^'.preg_quote($series_title, '/').'\s*[-â]\s*/iu';
+            $t   = preg_replace($pat, '', $t);
+        }
+        return trim($t);
+    }
+
     private static function get_series_lookup(){
         static $lookup = null;
         if ($lookup !== null) return $lookup;
@@ -467,9 +485,28 @@ class Aipex_Podcast_Soundcloud {
             return $cache[$series_id];
         }
 
-        // Strategy 2: fuzzy-match the show name against presenter post titles.
-        // WRS presenter titles often contain the show name (e.g. a presenter
-        // whose post is titled after their show). Find the best match >= 75%.
+        // Strategy 2: read ACF presenter field directly from episodes in this show.
+        // More reliable than the relationship table when the table hasn't been
+        // fully synced yet (e.g. freshly imported episodes).
+        $all_ep_ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids',
+            'meta_query'=>[['key'=>'series','value'=>$series_id,'compare'=>'LIKE']]]);
+        if (!$all_ep_ids) {
+            // Also try via relationship table as a secondary source
+            $all_ep_ids = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id);
+        }
+        $acf_counts = [];
+        foreach ((array)$all_ep_ids as $ep_id) {
+            $pids = get_field('presenters', $ep_id);
+            if ($pids) foreach ((array)$pids as $pid) $acf_counts[(int)$pid] = ($acf_counts[(int)$pid] ?? 0) + 1;
+        }
+        if ($acf_counts) {
+            arsort($acf_counts);
+            $cache[$series_id] = (int)array_key_first($acf_counts);
+            return $cache[$series_id];
+        }
+
+        // Strategy 3: fuzzy-match show name against presenter post titles.
+        // Works when presenter post is titled after their show (e.g. "Dr Annette Talks").
         $series_title = get_the_title($series_id);
         $presenters   = get_posts(['post_type'=>'aipex_presenter','post_status'=>'any','posts_per_page'=>-1,'fields'=>'all']);
         $best_id = 0; $best_score = 0;
@@ -477,7 +514,7 @@ class Aipex_Podcast_Soundcloud {
             $score = Aipex_Podcast_Fields::match_score($series_title, $p->post_title);
             if ($score > $best_score) { $best_score = $score; $best_id = (int)$p->ID; }
         }
-        $result = $best_score >= 75 ? $best_id : 0;
+        $result = $best_score >= 70 ? $best_id : 0;
         $cache[$series_id] = $result;
         return $result;
     }
@@ -495,9 +532,15 @@ class Aipex_Podcast_Soundcloud {
         $ep_ids = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id);
         if (!$ep_ids) return null;
         $posts = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'post__in'=>$ep_ids,'meta_query'=>[['key'=>'soundcloud_url','compare'=>'NOT EXISTS']]]);
+        // Also try with show name prefix and date codes stripped
+        $series_title   = get_the_title($series_id);
+        $norm_title     = self::normalize_track_title($track_title, $series_title);
         $best = null; $best_score = 0;
         foreach ($posts as $ep) {
-            $score = Aipex_Podcast_Fields::match_score($track_title, $ep->post_title);
+            $score = max(
+                Aipex_Podcast_Fields::match_score($track_title, $ep->post_title),
+                Aipex_Podcast_Fields::match_score($norm_title,  $ep->post_title)
+            );
             if ($score > $best_score) { $best_score = $score; $best = $ep; }
         }
         return $best ? ['post'=>$best,'score'=>$best_score] : null;
