@@ -2,12 +2,12 @@
 /**
  * Plugin Name: Aipex Podcast System
  * Description: Modular podcast CMS with ACF fields, shortcodes, Elementor widgets, scanners and Dropbox importer.
- * Version: 4.3.16
+ * Version: 4.3.17
  * Author: Aipex
  */
 if (!defined('ABSPATH')) exit;
 
-define('AIPEX_PODCAST_VERSION','4.3.16');
+define('AIPEX_PODCAST_VERSION','4.3.17');
 define('AIPEX_PODCAST_FILE',__FILE__);
 define('AIPEX_PODCAST_DIR',plugin_dir_path(__FILE__));
 define('AIPEX_PODCAST_URL',plugin_dir_url(__FILE__));

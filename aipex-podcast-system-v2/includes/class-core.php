@@ -37,6 +37,8 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_batch_continue',        ['Aipex_Podcast_Transcription','ajax_batch_continue']);
         add_action('wp_ajax_aipex_process_episode',       ['Aipex_Podcast_Transcription','ajax_process_episode']);
         add_action('wp_ajax_aipex_migrate_summaries',     ['Aipex_Podcast_Transcription','ajax_migrate_summaries']);
+        add_action('wp_ajax_aipex_test_assemblyai',       ['Aipex_Podcast_Transcription','ajax_test_assemblyai']);
+        add_action('wp_ajax_aipex_poll_now',              ['Aipex_Podcast_Transcription','ajax_poll_now']);
         // Cron
         add_filter('cron_schedules',                  ['Aipex_Podcast_Transcription','register_cron_interval']);
         add_action(Aipex_Podcast_Transcription::CRON_HOOK, ['Aipex_Podcast_Transcription','poll_pending_jobs']);

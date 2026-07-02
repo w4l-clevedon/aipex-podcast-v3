@@ -26,6 +26,31 @@ class Aipex_Podcast_Transcription {
     const SCAN_OPTION  = 'aipex_transcription_scan';
 
     // -------------------------------------------------------------------------
+    // cURL helper — bypasses WordPress HTTP which strips Authorization headers
+    // -------------------------------------------------------------------------
+
+    private static function curl_request($method, $url, $headers = [], $body = null){
+        $ch = curl_init($url);
+        $header_lines = [];
+        foreach ($headers as $k => $v) $header_lines[] = $k.': '.$v;
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER    => true,
+            CURLOPT_TIMEOUT           => 30,
+            CURLOPT_HTTPHEADER        => $header_lines,
+            CURLOPT_FOLLOWLOCATION    => true,
+            CURLOPT_UNRESTRICTED_AUTH => true,
+            CURLOPT_SSL_VERIFYPEER    => true,
+            CURLOPT_CUSTOMREQUEST     => strtoupper($method),
+        ]);
+        if ($body !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        $response = (string)curl_exec($ch);
+        $code     = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err      = curl_error($ch);
+        curl_close($ch);
+        return ['code'=>$code,'body'=>$response,'data'=>json_decode($response,true),'error'=>$err];
+    }
+
+    // -------------------------------------------------------------------------
     // API credentials
     // -------------------------------------------------------------------------
 
@@ -139,16 +164,12 @@ class Aipex_Podcast_Transcription {
         $audio_url = self::get_audio_url($post_id);
         if (!$audio_url) return ['error' => 'No audio source found for this episode.'];
 
-        $response = wp_remote_post('https://api.assemblyai.com/v2/transcript', [
-            'timeout' => 15,
-            'headers' => ['Authorization' => $key, 'Content-Type' => 'application/json'],
-            'body'    => wp_json_encode(['audio_url' => $audio_url, 'language_detection' => true]),
-        ]);
-
-        if (is_wp_error($response)) return ['error' => $response->get_error_message()];
-        $code = wp_remote_retrieve_response_code($response);
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        if ($code !== 200 || empty($data['id'])) return ['error' => 'AssemblyAI error: '.($data['error'] ?? 'HTTP '.$code)];
+        $r = self::curl_request('POST', 'https://api.assemblyai.com/v2/transcript',
+            ['Authorization' => $key, 'Content-Type' => 'application/json'],
+            wp_json_encode(['audio_url' => $audio_url, 'language_detection' => true])
+        );
+        if ($r['code'] !== 200 || empty($r['data']['id'])) return ['error' => 'AssemblyAI error HTTP '.$r['code'].': '.($r['data']['error'] ?? $r['error'] ?: 'Unknown').' audio_url='.substr($audio_url,0,80)];
+        $data = $r['data'];
 
         // Store job ID and mark as processing
         Aipex_Podcast_Fields::update('ai_job_id', $data['id'], $post_id);
@@ -178,11 +199,11 @@ class Aipex_Podcast_Transcription {
             $job_id = Aipex_Podcast_Fields::get('ai_job_id', $post_id);
             if (!$job_id) continue;
 
-            $r = wp_remote_get('https://api.assemblyai.com/v2/transcript/'.rawurlencode($job_id), [
-                'timeout' => 10, 'headers' => ['Authorization' => $key],
-            ]);
-            if (is_wp_error($r) || wp_remote_retrieve_response_code($r) !== 200) continue;
-            $data = json_decode(wp_remote_retrieve_body($r), true);
+            $r = self::curl_request('GET', 'https://api.assemblyai.com/v2/transcript/'.rawurlencode($job_id),
+                ['Authorization' => $key]
+            );
+            if ($r['code'] !== 200 || !is_array($r['data'])) continue;
+            $data = $r['data'];
 
             if ($data['status'] === 'completed') {
                 $transcript = $data['text'] ?? '';
@@ -232,26 +253,13 @@ class Aipex_Podcast_Transcription {
             ."key_points: 5-7 bullet points of the main topics discussed.\n"
             ."tags: 10-15 relevant lowercase tags suitable for WordPress post tags (no # symbol, no duplicates).";
 
-        $response = wp_remote_post('https://api.anthropic.com/v1/messages', [
-            'timeout' => 60,
-            'headers' => [
-                'x-api-key'         => $key,
-                'anthropic-version' => '2023-06-01',
-                'Content-Type'      => 'application/json',
-            ],
-            'body' => wp_json_encode([
-                'model'      => 'claude-haiku-4-5',
-                'max_tokens' => 1500,
-                'messages'   => [['role'=>'user','content'=>$prompt]],
-            ]),
-        ]);
+        $r = self::curl_request('POST', 'https://api.anthropic.com/v1/messages',
+            ['x-api-key' => $key, 'anthropic-version' => '2023-06-01', 'Content-Type' => 'application/json'],
+            wp_json_encode(['model'=>'claude-haiku-4-5','max_tokens'=>1500,'messages'=>[['role'=>'user','content'=>$prompt]]])
+        );
+        if ($r['code'] !== 200) return ['error' => 'Anthropic error HTTP '.$r['code'].': '.($r['data']['error']['message'] ?? $r['error'] ?: 'Unknown')];
 
-        if (is_wp_error($response)) return ['error' => $response->get_error_message()];
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        if ($code !== 200) return ['error' => 'Anthropic error: '.($body['error']['message'] ?? 'HTTP '.$code)];
-
-        $text = $body['content'][0]['text'] ?? '';
+        $text = $r['data']['content'][0]['text'] ?? '';
         // Strip any markdown fences
         $text = preg_replace('/^```json\s*/i', '', trim($text));
         $text = preg_replace('/\s*```$/', '', $text);
@@ -440,8 +448,13 @@ class Aipex_Podcast_Transcription {
                 else { $state['done']++; $log[] = 'DONE: '.mb_substr($title,0,50).' ('.$result['points'].' points, '.$result['tags'].' tags)'; }
             } else {
                 $result = self::submit_transcription($post_id);
-                if (isset($result['error'])) { $state['failed']++; $log[] = 'FAIL: '.mb_substr($title,0,50).' — '.$result['error']; }
-                else { $state['done']++; $log[] = 'SUBMITTED: '.mb_substr($title,0,50).' (job: '.$result['job_id'].')'; }
+                if (isset($result['error'])) {
+                    $state['failed']++;
+                    $log[] = 'FAIL: '.mb_substr($title,0,50).' — '.$result['error'];
+                } else {
+                    $state['done']++;
+                    $log[] = 'SUBMITTED: '.mb_substr($title,0,50).' (job: '.$result['job_id'].')';
+                }
                 usleep(300000); // 300ms pause between AssemblyAI submissions
             }
         }
@@ -454,6 +467,38 @@ class Aipex_Podcast_Transcription {
         else set_transient('aipex_batch_'.$type, $state, 2*HOUR_IN_SECONDS);
 
         return ['done'=>$state['done'],'failed'=>$state['failed'],'total'=>$state['total'],'pct'=>$pct,'finished'=>$finished,'log'=>$log];
+    }
+
+    // -------------------------------------------------------------------------
+    // AJAX — test AssemblyAI key and manual poll trigger
+    // -------------------------------------------------------------------------
+
+    public static function ajax_test_assemblyai(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);
+        check_ajax_referer('aipex_transcription','nonce');
+        $key = self::assemblyai_key();
+        if (!$key) wp_send_json_error(['message'=>'No AssemblyAI key set. Go to Settings → AI & Transcription.']);
+
+        // Hit their /v2/transcript endpoint with an empty list request — safe way to verify auth
+        $r = self::curl_request('GET', 'https://api.assemblyai.com/v2/transcript?limit=1', ['Authorization'=>$key]);
+        if ($r['code'] === 200) {
+            $count = count($r['data']['transcripts'] ?? []);
+            wp_send_json_success(['message'=>'AssemblyAI key valid ✓ (HTTP 200, '.$count.' recent transcripts in account)']);
+        } elseif ($r['code'] === 401) {
+            wp_send_json_error(['message'=>'Invalid API key — AssemblyAI returned 401. Check the key in Settings.']);
+        } else {
+            wp_send_json_error(['message'=>'Unexpected response HTTP '.$r['code'].': '.substr($r['body'],0,200)]);
+        }
+    }
+
+    public static function ajax_poll_now(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);
+        check_ajax_referer('aipex_transcription','nonce');
+        $pending = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids','meta_query'=>[['key'=>'ai_status','value'=>'processing']]]);
+        if (!$pending) wp_send_json_error(['message'=>'No episodes currently processing. Submit a transcription batch first.']);
+        self::poll_pending_jobs();
+        $still = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids','meta_query'=>[['key'=>'ai_status','value'=>'processing']]]);
+        wp_send_json_success(['message'=>'Poll complete. '.count($still).' jobs still processing. Refresh to see updated statuses.','pending_before'=>count($pending),'pending_after'=>count($still)]);
     }
 
     // -------------------------------------------------------------------------

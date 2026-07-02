@@ -552,6 +552,11 @@ class Aipex_Podcast_Admin {
             </span>
         </p>
 
+        <p>
+            <button type="button" class="button" id="aipex-trans-test">Test AssemblyAI Key</button>
+            <button type="button" class="button" id="aipex-poll-now" style="margin-left:8px">Poll Now (check pending jobs)</button>
+            <span id="aipex-trans-test-result" style="margin-left:10px;color:#646970"></span>
+        </p>
         <h4 style="margin:16px 0 8px">Batch: AI Content Only (has transcript, needs summary/points/tags)</h4>
         <p><button type="button" class="button button-primary" id="aipex-batch-ai-start" <?php echo empty($scan['ai_only']) ? 'disabled' : ''; ?>>
             Start AI Content Batch <?php echo !empty($scan['ai_only']) ? '('.(int)$scan['ai_only'].' episodes)' : ''; ?>
@@ -582,6 +587,26 @@ class Aipex_Podcast_Admin {
             var n=<?php echo wp_json_encode($nonce); ?>;
             function makeLog(id){ return function(m){ var $l=$(id); $l.text($l.text()?$l.text()+'\n'+m:m); $l.scrollTop($l[0].scrollHeight); }; }
 
+            // Test AssemblyAI key
+            $('#aipex-trans-test').on('click',function(){
+                var $b=$(this),$r=$('#aipex-trans-test-result');
+                $b.prop('disabled',true); $r.text('Testing…');
+                $.post(ajaxurl,{action:'aipex_test_assemblyai',nonce:n},function(resp){
+                    $b.prop('disabled',false);
+                    if(resp&&resp.success) $r.css('color','green').text('✓ '+resp.data.message);
+                    else $r.css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
+                }).fail(function(xhr){ $b.prop('disabled',false); $r.css('color','red').text('HTTP '+xhr.status); });
+            });
+            // Poll Now
+            $('#aipex-poll-now').on('click',function(){
+                var $b=$(this),$r=$('#aipex-trans-test-result');
+                $b.prop('disabled',true); $r.text('Polling…');
+                $.post(ajaxurl,{action:'aipex_poll_now',nonce:n},function(resp){
+                    $b.prop('disabled',false);
+                    if(resp&&resp.success) $r.css('color','green').text('✓ '+resp.data.message);
+                    else $r.css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
+                }).fail(function(xhr){ $b.prop('disabled',false); $r.css('color','red').text('HTTP '+xhr.status); });
+            });
             // Scan
             $('#aipex-trans-scan').on('click',function(){
                 var $b=$(this); $b.prop('disabled',true);
