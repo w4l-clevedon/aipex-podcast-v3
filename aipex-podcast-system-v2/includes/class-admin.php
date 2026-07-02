@@ -615,20 +615,26 @@ class Aipex_Podcast_Admin {
                     else $r.css('color','red').text('✗ '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed'));
                 }).fail(function(xhr){ $b.prop('disabled',false); $r.css('color','red').text('HTTP '+xhr.status); });
             });
-            // Scan
+            // Scan — batched, 100 episodes per call
+            var scanOffset=0;
+            function runScan(){
+                $.post(ajaxurl,{action:'aipex_transcription_scan',nonce:n,offset:scanOffset},function(resp){
+                    if(!resp||!resp.success){ $('#aipex-trans-scan').prop('disabled',false); $('#aipex-trans-scan-result').text('Scan failed.'); return; }
+                    var d=resp.data;
+                    $('#aipex-trans-scan-result').text('Scanning… '+Math.min(d.offset,d.total)+'/'+d.total+' episodes ('+d.pct+'%)');
+                    if(!d.finished){ scanOffset=d.offset; setTimeout(runScan,200); return; }
+                    // Done
+                    $('#aipex-trans-scan').prop('disabled',false);
+                    $('#aipex-trans-scan-result').text('✓ Done — Complete: '+d.complete+' | AI only: '+d.ai_only+' | Dropbox: '+d.transcribe_dropbox+' | SoundCloud: '+d.transcribe_sc+' | No source: '+d.no_source);
+                    if(d.ai_only>0) $('#aipex-batch-ai-start').prop('disabled',false).text('Start AI Content Batch ('+d.ai_only+' episodes)');
+                    if(d.transcribe_dropbox>0) $('#aipex-batch-dbx-start').prop('disabled',false).text('Start Dropbox Batch ('+d.transcribe_dropbox+' available, est. £'+d.est_cost_dropbox_gbp+' total)');
+                    if(d.transcribe_sc>0) $('#aipex-batch-sc-start').prop('disabled',false).text('Start SoundCloud Batch ('+d.transcribe_sc+' available, est. £'+d.est_cost_sc_gbp+' total)');
+                }).fail(function(){ $('#aipex-trans-scan').prop('disabled',false); $('#aipex-trans-scan-result').css('color','red').text('Server error during scan — check PHP error log.'); });
+            }
             $('#aipex-trans-scan').on('click',function(){
-                var $b=$(this); $b.prop('disabled',true);
-                $('#aipex-trans-scan-result').text('Scanning…');
-                $.post(ajaxurl,{action:'aipex_transcription_scan',nonce:n},function(resp){
-                    $b.prop('disabled',false);
-                    if(resp&&resp.success){
-                        var d=resp.data;
-                        $('#aipex-trans-scan-result').text('✓ Complete: '+d.complete+' | 🤖 AI only: '+d.ai_only+' | 🎙 Transcribe: '+d.transcribe+' | ✗ No source: '+d.no_source+' | Est. cost: £'+d.est_cost_gbp);
-                        if(d.ai_only>0) $('#aipex-batch-ai-start').prop('disabled',false).text('Start AI Content Batch ('+d.ai_only+' episodes)');
-                        if(d.transcribe_dropbox>0) $('#aipex-batch-dbx-start').prop('disabled',false).text('Start Dropbox Batch ('+d.transcribe_dropbox+' available, est. £'+d.est_cost_dropbox_gbp+' total)');
-                        if(d.transcribe_sc>0)      $('#aipex-batch-sc-start').prop('disabled',false).text('Start SoundCloud Batch ('+d.transcribe_sc+' available, est. £'+d.est_cost_sc_gbp+' total)');
-                    } else $('#aipex-trans-scan-result').text('Scan failed.');
-                }).fail(function(){ $b.prop('disabled',false); });
+                $(this).prop('disabled',true); scanOffset=0;
+                $('#aipex-trans-scan-result').css('color','#646970').text('Starting scan…');
+                runScan();
             });
 
             // Generic batch runner

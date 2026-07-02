@@ -413,18 +413,80 @@ class Aipex_Podcast_Transcription {
     // AJAX — batch scanner (Tools & Scanners)
     // -------------------------------------------------------------------------
 
+    /**
+     * Scan runs in batches to avoid PHP memory/timeout limits.
+     * Each AJAX call processes 100 episodes and returns progress.
+     * The frontend keeps calling until finished=true.
+     */
     public static function ajax_scan(){
         if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);
         check_ajax_referer('aipex_transcription','nonce');
-        $states = self::scan_all();
-        $scan = get_option(self::SCAN_OPTION,[]);
+
+        $offset     = (int)($_POST['offset'] ?? 0);
+        $batch_size = 100;
+
+        // On first call, get total count and reset stored results
+        if ($offset === 0) {
+            delete_option(self::SCAN_OPTION.'_progress');
+        }
+
+        $all_ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids']);
+        $total   = count($all_ids);
+        $slice   = array_slice($all_ids, $offset, $batch_size);
+
+        // Load running totals from previous batches
+        $progress = get_option(self::SCAN_OPTION.'_progress', [
+            'complete'=>[],'ai_only'=>[],'transcribe_dropbox'=>[],'transcribe_sc'=>[],'no_source'=>[],
+        ]);
+
+        foreach ($slice as $id) {
+            $state = self::episode_state($id);
+            if ($state === 'transcribe') {
+                $has_dropbox = !empty(Aipex_Podcast_Fields::get('dropbox_url', $id))
+                            || !empty(Aipex_Podcast_Fields::get('audio_file', $id));
+                $progress[$has_dropbox ? 'transcribe_dropbox' : 'transcribe_sc'][] = $id;
+            } else {
+                $progress[$state][] = $id;
+            }
+        }
+
+        $new_offset = $offset + $batch_size;
+        $finished   = $new_offset >= $total;
+
+        if ($finished) {
+            // Store final results
+            $cost_dropbox = count($progress['transcribe_dropbox']) * 0.075;
+            $cost_sc      = count($progress['transcribe_sc'])      * 0.075;
+            update_option(self::SCAN_OPTION, [
+                'complete'               => count($progress['complete']),
+                'ai_only'                => count($progress['ai_only']),
+                'transcribe_dropbox'     => count($progress['transcribe_dropbox']),
+                'transcribe_sc'          => count($progress['transcribe_sc']),
+                'no_source'              => count($progress['no_source']),
+                'ai_only_ids'            => $progress['ai_only'],
+                'transcribe_dropbox_ids' => $progress['transcribe_dropbox'],
+                'transcribe_sc_ids'      => $progress['transcribe_sc'],
+                'scanned_at'             => current_time('mysql'),
+                'est_cost_dropbox_gbp'   => round($cost_dropbox * 0.79, 2),
+                'est_cost_sc_gbp'        => round($cost_sc * 0.79, 2),
+            ], false);
+            delete_option(self::SCAN_OPTION.'_progress');
+        } else {
+            update_option(self::SCAN_OPTION.'_progress', $progress, false);
+        }
+
         wp_send_json_success([
-            'complete'    => count($states['complete']),
-            'ai_only'     => count($states['ai_only']),
-            'transcribe'  => count($states['transcribe']),
-            'no_source'   => count($states['no_source']),
-            'est_cost_usd'=> $scan['est_cost_usd'] ?? 0,
-            'est_cost_gbp'=> round(($scan['est_cost_usd'] ?? 0) * 0.79, 2),
+            'finished'           => $finished,
+            'offset'             => $new_offset,
+            'total'              => $total,
+            'pct'                => min(100, (int)round(100 * $new_offset / max(1,$total))),
+            'complete'           => count($progress['complete']),
+            'ai_only'            => count($progress['ai_only']),
+            'transcribe_dropbox' => count($progress['transcribe_dropbox']),
+            'transcribe_sc'      => count($progress['transcribe_sc']),
+            'no_source'          => count($progress['no_source']),
+            'est_cost_dropbox_gbp' => round(count($progress['transcribe_dropbox']) * 0.075 * 0.79, 2),
+            'est_cost_sc_gbp'    => round(count($progress['transcribe_sc']) * 0.075 * 0.79, 2),
         ]);
     }
 
