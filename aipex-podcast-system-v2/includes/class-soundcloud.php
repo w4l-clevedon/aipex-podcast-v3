@@ -343,7 +343,9 @@ class Aipex_Podcast_Soundcloud {
 
         $state = ['user_id'=>$user_id,'next_href'=>null,'fetched'=>0,'done'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'phase'=>'fetch'];
         set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
-        wp_send_json_success(array_merge(self::run_fetch_batch($state), ['log'=>['Connected. Fetching tracks from @'.self::username().'…']]));
+        $fetch_result = self::run_fetch_batch($state);
+        $fetch_result['log'] = array_merge(['Connected. Fetching tracks from @'.self::username().'…'], $fetch_result['log'] ?? []);
+        wp_send_json_success($fetch_result);
     }
 
     public static function ajax_import_batch(){
@@ -355,8 +357,10 @@ class Aipex_Podcast_Soundcloud {
     }
 
     private static function run_fetch_batch($state){
-        $page = self::fetch_tracks_page($state['user_id'], $state['next_href'] ?? null);
-        $log  = [];
+        $next_href = $state['next_href'] ?? null;
+        $tracks_url = $next_href ?: 'https://api.soundcloud.com/users/'.rawurlencode((string)$state['user_id']).'/tracks.json?limit=200&linked_partitioning=1';
+        $page = self::fetch_tracks_page($state['user_id'], $next_href);
+        $log  = ['Calling: '.substr($tracks_url,0,80)];
 
         if (isset($page['error']) && $page['error'] === 'rate_limit') {
             set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
@@ -365,11 +369,14 @@ class Aipex_Podcast_Soundcloud {
         }
 
         if (!$page) {
+            // Log what the raw API actually returned for diagnosis
+            $raw = self::api_get($tracks_url);
+            $log[] = 'Fetch returned null — HTTP '.$raw['code'].' body: '.substr($raw['body']??'',0,200);
             $state['phase'] = 'match'; $state['match_offset'] = 0;
             $index = get_option(self::INDEX_OPTION, []);
             $state['match_total'] = count($index);
             set_transient(self::STATE_KEY, $state, HOUR_IN_SECONDS);
-            $log[] = 'Fetch failed. Matching against '.count($index).' tracks.';
+            $log[] = 'Matching against '.count($index).' tracks.';
             return ['phase'=>'fetch_error','fetched'=>$state['fetched'],'log'=>$log,'pct'=>50,'done'=>0,'total'=>0,'linked'=>0,'review'=>0,'new_ep'=>0,'skipped'=>0,'finished'=>false];
         }
 
