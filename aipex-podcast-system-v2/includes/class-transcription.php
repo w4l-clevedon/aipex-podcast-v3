@@ -89,18 +89,35 @@ class Aipex_Podcast_Transcription {
      * a cost estimate before anything is processed.
      */
     public static function scan_all(){
-        $states = ['complete'=>[],'ai_only'=>[],'transcribe'=>[],'no_source'=>[]];
+        $states = ['complete'=>[],'ai_only'=>[],'transcribe_dropbox'=>[],'transcribe_sc'=>[],'no_source'=>[]];
         $ids = get_posts(['post_type'=>'aipex_podcast','post_status'=>'any','posts_per_page'=>-1,'fields'=>'ids']);
-        foreach ($ids as $id) $states[self::episode_state($id)][] = $id;
+        foreach ($ids as $id) {
+            $state = self::episode_state($id);
+            if ($state === 'transcribe') {
+                // Split by audio source type
+                $has_dropbox = !empty(Aipex_Podcast_Fields::get('dropbox_url', $id))
+                            || !empty(Aipex_Podcast_Fields::get('audio_file', $id));
+                $states[$has_dropbox ? 'transcribe_dropbox' : 'transcribe_sc'][] = $id;
+            } else {
+                $states[$state][] = $id;
+            }
+        }
 
-        // Cost estimate: AssemblyAI $0.15/hr + $0.03/hr summarisation add-on
-        // Average 25 min episode = ~$0.075 per transcription
-        // Claude Haiku for AI content: ~$0.001 per episode (negligible)
-        $transcribe_cost_usd = count($states['transcribe']) * 0.075;
-        update_option(self::SCAN_OPTION, array_merge(
-            array_map('count', $states),
-            ['transcribe_ids' => $states['transcribe'], 'ai_only_ids' => $states['ai_only'], 'scanned_at' => current_time('mysql'), 'est_cost_usd' => round($transcribe_cost_usd, 2)]
-        ), false);
+        $cost_dropbox = count($states['transcribe_dropbox']) * 0.075;
+        $cost_sc      = count($states['transcribe_sc'])      * 0.075;
+        update_option(self::SCAN_OPTION, [
+            'complete'            => count($states['complete']),
+            'ai_only'             => count($states['ai_only']),
+            'transcribe_dropbox'  => count($states['transcribe_dropbox']),
+            'transcribe_sc'       => count($states['transcribe_sc']),
+            'no_source'           => count($states['no_source']),
+            'ai_only_ids'         => $states['ai_only'],
+            'transcribe_dropbox_ids' => $states['transcribe_dropbox'],
+            'transcribe_sc_ids'   => $states['transcribe_sc'],
+            'scanned_at'          => current_time('mysql'),
+            'est_cost_dropbox_gbp'=> round($cost_dropbox * 0.79, 2),
+            'est_cost_sc_gbp'     => round($cost_sc      * 0.79, 2),
+        ], false);
         return $states;
     }
 
@@ -420,7 +437,6 @@ class Aipex_Podcast_Transcription {
         $scan = get_option(self::SCAN_OPTION,[]);
         $ids  = $scan[$type.'_ids'] ?? [];
         if (!$ids) wp_send_json_error(['message'=>'No episodes in this category. Run the scanner first.']);
-
         // Cap to limit if set (e.g. 50 for a test run)
         if ($limit > 0) $ids = array_slice($ids, 0, $limit);
 
@@ -446,8 +462,7 @@ class Aipex_Podcast_Transcription {
 
         foreach ($slice as $post_id) {
             $title = get_the_title($post_id);
-            if ($type === 'ai_only') {
-                $result = self::generate_ai_content($post_id);
+            if ($type === 'ai_only') {                $result = self::generate_ai_content($post_id);
                 if (isset($result['error'])) { $state['failed']++; $log[] = 'FAIL: '.mb_substr($title,0,50).' — '.$result['error']; }
                 else { $state['done']++; $log[] = 'DONE: '.mb_substr($title,0,50).' ('.$result['points'].' points, '.$result['tags'].' tags)'; }
             } else {

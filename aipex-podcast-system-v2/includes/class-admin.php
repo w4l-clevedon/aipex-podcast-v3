@@ -557,29 +557,37 @@ class Aipex_Podcast_Admin {
             <button type="button" class="button" id="aipex-poll-now" style="margin-left:8px">Poll Now (check pending jobs)</button>
             <span id="aipex-trans-test-result" style="margin-left:10px;color:#646970"></span>
         </p>
-        <h4 style="margin:16px 0 8px">Batch: AI Content Only (has transcript, needs summary/points/tags)</h4>
+        <h4 style="margin:16px 0 8px">1 — AI Content Only (transcript → summary / key points / tags)</h4>
+        <p style="color:#646970;font-size:13px">Free — no AssemblyAI cost. Processes episodes that already have a transcript.</p>
         <p><button type="button" class="button button-primary" id="aipex-batch-ai-start" <?php echo empty($scan['ai_only']) ? 'disabled' : ''; ?>>
-            Start AI Content Batch <?php echo !empty($scan['ai_only']) ? '('.(int)$scan['ai_only'].' episodes)' : ''; ?>
+            Start AI Content Batch <?php echo !empty($scan['ai_only']) ? '('.(int)$scan['ai_only'].' episodes)' : '(none ready)'; ?>
         </button>
         <button type="button" class="button" id="aipex-batch-ai-stop" style="display:none">Stop</button>
         <span id="aipex-batch-ai-status" style="margin-left:10px;color:#646970"></span></p>
         <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-ai-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
         <pre id="aipex-batch-ai-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
 
-        <h4 style="margin:16px 0 8px">Batch: Full Transcription (Dropbox/upload audio → AssemblyAI → Claude)</h4>
-        <p style="color:#646970;font-size:13px">Note: SoundCloud-only episodes require the SoundCloud OAuth connection to be active first.</p>
-        <p>
-            <label style="margin-right:12px">Episodes to process:
-                <input type="number" id="aipex-batch-tr-limit" value="50" min="1" max="9999" style="width:80px;margin-left:6px"> <span style="color:#646970;font-size:12px">(set to a large number to process all)</span>
-            </label>
-        </p>
-        <p><button type="button" class="button button-primary" id="aipex-batch-tr-start" <?php echo empty($scan['transcribe']) ? 'disabled' : ''; ?>>
-            Start Transcription Batch <?php echo !empty($scan['transcribe']) ? '('.(int)$scan['transcribe'].' total, est. £'.($scan['est_cost_gbp']??'?').')' : ''; ?>
+        <h4 style="margin:16px 0 8px">2 — Dropbox / File Upload → AssemblyAI → Claude</h4>
+        <p style="color:#646970;font-size:13px">No SoundCloud OAuth needed. Test the pipeline here first before running the SC batch.</p>
+        <p><label>Episodes to process: <input type="number" id="aipex-batch-dbx-limit" value="5" min="1" max="9999" style="width:70px;margin:0 6px"> <span style="color:#646970;font-size:12px">start small to test</span></label></p>
+        <p><button type="button" class="button button-primary" id="aipex-batch-dbx-start" <?php echo empty($scan['transcribe_dropbox']) ? 'disabled' : ''; ?>>
+            Start Dropbox Batch <?php echo !empty($scan['transcribe_dropbox']) ? '('.(int)$scan['transcribe_dropbox'].' available, est. £'.($scan['est_cost_dropbox_gbp']??'?').' total)' : '(none ready — run Scan)'; ?>
         </button>
-        <button type="button" class="button" id="aipex-batch-tr-stop" style="display:none">Stop</button>
-        <span id="aipex-batch-tr-status" style="margin-left:10px;color:#646970"></span></p>
-        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-tr-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
-        <pre id="aipex-batch-tr-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+        <button type="button" class="button" id="aipex-batch-dbx-stop" style="display:none">Stop</button>
+        <span id="aipex-batch-dbx-status" style="margin-left:10px;color:#646970"></span></p>
+        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-dbx-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
+        <pre id="aipex-batch-dbx-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+
+        <h4 style="margin:16px 0 8px">3 — SoundCloud → AssemblyAI → Claude</h4>
+        <p style="color:#646970;font-size:13px">⚠ Requires SoundCloud OAuth connected. Use Test Connection above to confirm before running.</p>
+        <p><label>Episodes to process: <input type="number" id="aipex-batch-sc-limit" value="50" min="1" max="9999" style="width:70px;margin:0 6px"> <span style="color:#646970;font-size:12px">est. £<?php echo esc_html(round(($scan['est_cost_sc_gbp']??0)/max(1,$scan['transcribe_sc']??1)*50,2)); ?> for 50</span></label></p>
+        <p><button type="button" class="button button-primary" id="aipex-batch-sc-start" <?php echo empty($scan['transcribe_sc']) ? 'disabled' : ''; ?>>
+            Start SoundCloud Batch <?php echo !empty($scan['transcribe_sc']) ? '('.(int)$scan['transcribe_sc'].' available, est. £'.($scan['est_cost_sc_gbp']??'?').' total)' : '(none ready — run Scan)'; ?>
+        </button>
+        <button type="button" class="button" id="aipex-batch-sc-stop" style="display:none">Stop</button>
+        <span id="aipex-batch-sc-status" style="margin-left:10px;color:#646970"></span></p>
+        <div style="height:12px;background:#f0f0f1;border-radius:20px;overflow:hidden;margin-bottom:6px"><div id="aipex-batch-sc-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div>
+        <pre id="aipex-batch-sc-log" style="background:#f6f7f7;padding:10px;max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
         <?php endif; ?>
         </div>
         <script>
@@ -617,7 +625,8 @@ class Aipex_Podcast_Admin {
                         var d=resp.data;
                         $('#aipex-trans-scan-result').text('✓ Complete: '+d.complete+' | 🤖 AI only: '+d.ai_only+' | 🎙 Transcribe: '+d.transcribe+' | ✗ No source: '+d.no_source+' | Est. cost: £'+d.est_cost_gbp);
                         if(d.ai_only>0) $('#aipex-batch-ai-start').prop('disabled',false).text('Start AI Content Batch ('+d.ai_only+' episodes)');
-                        if(d.transcribe>0) $('#aipex-batch-tr-start').prop('disabled',false).text('Start Transcription Batch ('+d.transcribe+' episodes, est. £'+d.est_cost_gbp+')');
+                        if(d.transcribe_dropbox>0) $('#aipex-batch-dbx-start').prop('disabled',false).text('Start Dropbox Batch ('+d.transcribe_dropbox+' available, est. £'+d.est_cost_dropbox_gbp+' total)');
+                        if(d.transcribe_sc>0)      $('#aipex-batch-sc-start').prop('disabled',false).text('Start SoundCloud Batch ('+d.transcribe_sc+' available, est. £'+d.est_cost_sc_gbp+' total)');
                     } else $('#aipex-trans-scan-result').text('Scan failed.');
                 }).fail(function(){ $b.prop('disabled',false); });
             });
@@ -646,7 +655,8 @@ class Aipex_Podcast_Admin {
                 $(stopBtn).on('click',function(){ running=false; $(this).hide(); $(startBtn).prop('disabled',false); $(statusId).text('Stopped.'); });
             }
             runBatch('ai_only','#aipex-batch-ai-start','#aipex-batch-ai-stop','#aipex-batch-ai-bar','#aipex-batch-ai-log','#aipex-batch-ai-status',null);
-            runBatch('transcribe','#aipex-batch-tr-start','#aipex-batch-tr-stop','#aipex-batch-tr-bar','#aipex-batch-tr-log','#aipex-batch-tr-status','#aipex-batch-tr-limit');
+            runBatch('transcribe_dropbox','#aipex-batch-dbx-start','#aipex-batch-dbx-stop','#aipex-batch-dbx-bar','#aipex-batch-dbx-log','#aipex-batch-dbx-status','#aipex-batch-dbx-limit');
+            runBatch('transcribe_sc','#aipex-batch-sc-start','#aipex-batch-sc-stop','#aipex-batch-sc-bar','#aipex-batch-sc-log','#aipex-batch-sc-status','#aipex-batch-sc-limit');
         });
         </script>
         <?php
