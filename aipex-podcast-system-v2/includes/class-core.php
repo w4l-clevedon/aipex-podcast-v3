@@ -25,7 +25,8 @@ class Aipex_Podcast_Core {
         add_action('wp_ajax_aipex_sc_test',           ['Aipex_Podcast_Soundcloud','ajax_test_connection']);
         add_action('wp_ajax_aipex_sc_import_start',   ['Aipex_Podcast_Soundcloud','ajax_import_start']);
         add_action('wp_ajax_aipex_sc_import_batch',   ['Aipex_Podcast_Soundcloud','ajax_import_batch']);
-        add_action('wp_ajax_aipex_sc_create_draft',   ['Aipex_Podcast_Soundcloud','ajax_create_draft']);
+        add_action('wp_ajax_aipex_sc_create_draft',          ['Aipex_Podcast_Soundcloud','ajax_create_draft']);
+        add_action('wp_ajax_aipex_sc_create_all_drafts',   ['Aipex_Podcast_Soundcloud','ajax_create_all_drafts']);
         add_action('wp_ajax_aipex_csv_upload',        ['Aipex_Podcast_CSV_Importer','ajax_upload']);
         add_action('wp_ajax_aipex_csv_match_start',   ['Aipex_Podcast_CSV_Importer','ajax_match_start']);
         add_action('wp_ajax_aipex_csv_match_batch',   ['Aipex_Podcast_CSV_Importer','ajax_match_batch']);

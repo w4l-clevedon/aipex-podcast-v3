@@ -414,6 +414,31 @@ class Aipex_Podcast_Soundcloud {
         return $lookup;
     }
 
+    /**
+     * Finds the most-used presenter across all existing episodes for a
+     * given series. Used to auto-assign presenter when the track/CSV row
+     * doesn't specify one, avoiding 700+ manual assignments.
+     * Cached per series per request.
+     */
+    public static function get_series_primary_presenter($series_id){
+        static $cache = [];
+        $series_id = (int)$series_id;
+        if (!$series_id) return 0;
+        if (isset($cache[$series_id])) return $cache[$series_id];
+
+        $ep_ids = Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id);
+        $counts = [];
+        foreach ($ep_ids as $ep_id) {
+            $hosts = Aipex_Podcast_Relationships::hosts_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $ep_id);
+            foreach ($hosts as $host_id) $counts[$host_id] = ($counts[$host_id] ?? 0) + 1;
+        }
+        if (!$counts) { $cache[$series_id] = 0; return 0; }
+        arsort($counts);
+        $presenter_id = (int)array_key_first($counts);
+        $cache[$series_id] = $presenter_id;
+        return $presenter_id;
+    }
+
     private static function best_series_match($track_title, $min_score = 80){
         $best_id = 0; $best_score = 0; $best_title = '';
         foreach (self::get_series_lookup() as $sid => $stitle) {
@@ -446,19 +471,27 @@ class Aipex_Podcast_Soundcloud {
             $series = self::best_series_match($track['title'], 80);
             if (!$series) { $state['skipped']++; continue; }
 
+            // Auto-find the primary presenter for this series from existing episodes
+            $auto_presenter_id = self::get_series_primary_presenter($series['id']);
+
             $ep = self::best_episode_match($track['title'], $series['id']);
 
             if ($ep && $ep['score'] >= 90) {
                 update_post_meta($ep['post']->ID, 'soundcloud_url', esc_url_raw($track['url']));
+                // Also assign presenter if not already set
+                if ($auto_presenter_id && empty(Aipex_Podcast_Relationships::hosts_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $ep['post']->ID))) {
+                    Aipex_Podcast_Fields::update('presenters', [$auto_presenter_id], $ep['post']->ID);
+                    Aipex_Podcast_Relationships::add(Aipex_Podcast_Relationships::TYPE_EPISODE, $ep['post']->ID, Aipex_Podcast_Relationships::TYPE_HOST, $auto_presenter_id);
+                }
                 Aipex_Podcast_Relationships::sync_post($ep['post']->ID);
                 $state['linked']++;
                 $log[] = 'LINKED '.$ep['score'].'%: '.mb_substr($track['title'],0,50);
             } elseif ($ep && $ep['score'] >= 60) {
-                $review[] = ['episode_id'=>$ep['post']->ID,'episode_title'=>$ep['post']->post_title,'track_url'=>$track['url'],'track_title'=>$track['title'],'score'=>$ep['score'],'series_id'=>$series['id'],'series_title'=>$series['title']];
+                $review[] = ['episode_id'=>$ep['post']->ID,'episode_title'=>$ep['post']->post_title,'track_url'=>$track['url'],'track_title'=>$track['title'],'score'=>$ep['score'],'series_id'=>$series['id'],'series_title'=>$series['title'],'presenter_id'=>$auto_presenter_id];
                 $state['review']++;
                 $log[] = 'REVIEW '.$ep['score'].'%: '.mb_substr($track['title'],0,50);
             } else {
-                $new_eps[] = ['track_title'=>$track['title'],'track_url'=>$track['url'],'track_created'=>$track['created']??'','series_id'=>$series['id'],'series_title'=>$series['title'],'series_score'=>$series['score'],'presenter_id'=>0];
+                $new_eps[] = ['track_title'=>$track['title'],'track_url'=>$track['url'],'track_created'=>$track['created']??'','series_id'=>$series['id'],'series_title'=>$series['title'],'series_score'=>$series['score'],'presenter_id'=>$auto_presenter_id];
                 $state['new_ep']++;
                 $log[] = 'NEW EP: '.mb_substr($track['title'],0,60).' → '.$series['title'];
             }
@@ -503,6 +536,56 @@ class Aipex_Podcast_Soundcloud {
         unset($new_eps[$index]);
         update_option(self::NEW_EP_OPTION, array_values($new_eps), false);
         wp_send_json_success(['post_id'=>$post_id,'edit_url'=>get_edit_post_link($post_id,'raw'),'title'=>$item['track_title']]);
+    }
+
+    /** Batch-creates all new episode candidates as drafts in one go. */
+    public static function ajax_create_all_drafts(){
+        if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'Permission denied.'],403);
+        check_ajax_referer('aipex_sc_draft','nonce');
+
+        $offset     = (int)($_POST['offset'] ?? 0);
+        $batch_size = 20;
+        $new_eps    = get_option(self::NEW_EP_OPTION, []);
+        $total      = count($new_eps);
+        $slice      = array_slice($new_eps, $offset, $batch_size, true);
+        $done = 0; $log = [];
+
+        foreach ($slice as $index => $item) {
+            $presenter_id = (int)$item['presenter_id'];
+            // Fallback: look up from series if still 0
+            if (!$presenter_id && !empty($item['series_id'])) {
+                $presenter_id = (int)self::get_series_primary_presenter((int)$item['series_id']);
+            }
+            $post_id = wp_insert_post([
+                'post_type'   => 'aipex_podcast',
+                'post_status' => 'draft',
+                'post_title'  => sanitize_text_field($item['track_title']),
+                'post_date'   => !empty($item['track_created']) ? date('Y-m-d H:i:s', strtotime($item['track_created'])) : current_time('mysql'),
+            ]);
+            if (is_wp_error($post_id)) { $log[] = 'FAIL: '.mb_substr($item['track_title'],0,50).' — '.$post_id->get_error_message(); continue; }
+
+            update_post_meta($post_id, 'soundcloud_url', esc_url_raw($item['track_url']));
+            $show_id = (int)$item['series_id'];
+            if ($show_id) {
+                Aipex_Podcast_Fields::update('series', [$show_id], $post_id);
+                Aipex_Podcast_Relationships::add(Aipex_Podcast_Relationships::TYPE_EPISODE, $post_id, Aipex_Podcast_Relationships::TYPE_SHOW, $show_id);
+            }
+            if ($presenter_id) {
+                Aipex_Podcast_Fields::update('presenters', [$presenter_id], $post_id);
+                Aipex_Podcast_Relationships::add(Aipex_Podcast_Relationships::TYPE_EPISODE, $post_id, Aipex_Podcast_Relationships::TYPE_HOST, $presenter_id);
+            }
+            $done++;
+            $log[] = 'CREATED: '.mb_substr($item['track_title'],0,55).($presenter_id ? ' ['.get_the_title($presenter_id).']' : ' [no presenter]');
+        }
+
+        // Remove processed items from the queue
+        $remaining = array_values(array_diff_key($new_eps, array_slice($new_eps, $offset, $batch_size, true)));
+        update_option(self::NEW_EP_OPTION, $remaining, false);
+
+        $new_offset  = $offset + $batch_size;
+        $finished    = $new_offset >= $total;
+        $pct         = min(100, (int)round(100 * $new_offset / max(1,$total)));
+        wp_send_json_success(['done'=>$done,'offset'=>$new_offset,'total'=>$total,'pct'=>$pct,'finished'=>$finished,'remaining'=>count($remaining),'log'=>$log]);
     }
 
     // -------------------------------------------------------------------------
@@ -624,8 +707,15 @@ class Aipex_Podcast_Soundcloud {
         $presenters = get_posts(['post_type'=>'aipex_presenter','post_status'=>'publish','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
         $series_all = get_posts(['post_type'=>'aipex_series','post_status'=>'any','posts_per_page'=>-1,'orderby'=>'title','order'=>'ASC']);
         $draft_nonce = wp_create_nonce('aipex_sc_draft');
+        $draft_nonce_all = wp_create_nonce('aipex_sc_draft');
         echo '<hr><h2>New Episode Candidates ('.count($items).')</h2>';
-        echo '<p>Tracks matching a known show but no existing episode post. Click <strong>Create Draft</strong> to create a draft post with show and presenter pre-assigned.</p>';
+        echo '<p>Tracks matching a known show but no existing episode post. Presenter is auto-detected from existing episodes on that show.</p>';
+        echo '<div style="margin-bottom:16px;padding:14px 18px;background:#f6f7f7;border-radius:8px;display:flex;align-items:center;gap:16px">';
+        echo '<button type="button" class="button button-primary" id="aipex-sc-create-all" data-nonce="'.esc_attr($draft_nonce_all).'" data-total="'.esc_attr(count($items)).'">Create All '.count($items).' Drafts</button>';
+        echo '<div style="flex:1"><div style="height:12px;background:#e4e7ec;border-radius:20px;overflow:hidden"><div id="aipex-sc-all-bar" style="height:12px;width:0%;background:var(--aipex-brand,#e4005a);border-radius:20px;transition:width .3s"></div></div><span id="aipex-sc-all-status" style="font-size:13px;color:#646970;margin-top:4px;display:block"></span></div>';
+        echo '</div>';
+        echo '<pre id="aipex-sc-all-log" style="display:none;background:#f6f7f7;padding:10px;max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12px;margin-bottom:12px"></pre>';
+        echo '<p style="color:#646970;font-size:13px">Or create individually:</p>';
         echo '<table class="widefat striped"><thead><tr><th>Track</th><th>Show</th><th>Presenter</th><th style="width:120px"></th></tr></thead><tbody>';
         foreach ($items as $i => $item) {
             echo '<tr id="aipex-sc-new-'.esc_attr($i).'">';
@@ -640,7 +730,45 @@ class Aipex_Podcast_Soundcloud {
             echo '<td><button type="button" class="button button-primary aipex-sc-create-draft" data-index="'.esc_attr($i).'" data-nonce="'.esc_attr($draft_nonce).'">Create Draft</button></td></tr>';
         }
         echo '</tbody></table>';
-        echo '<script>jQuery(function($){ $(document).on("click",".aipex-sc-create-draft",function(){ var $btn=$(this),idx=$btn.data("index"),nonce=$btn.data("nonce"),series_id=$(".aipex-sc-series-sel[data-index=\'"+idx+"\']").val()||0,presenter_id=$(".aipex-sc-presenter-sel[data-index=\'"+idx+"\']").val()||0; $btn.prop("disabled",true).text("Creating…"); $.post(ajaxurl,{action:"aipex_sc_create_draft",nonce:nonce,index:idx,series_id:series_id,presenter_id:presenter_id},function(resp){ if(resp&&resp.success){ $("#aipex-sc-new-"+idx).html(\'<td colspan="4" style="color:green">✓ Draft: <a href="\'+resp.data.edit_url+\'" target="_blank">\'+resp.data.title+"</a></td>"); } else { $btn.prop("disabled",false).text("Create Draft"); alert("Error: "+(resp&&resp.data&&resp.data.message?resp.data.message:"Unknown")); } }).fail(function(){ $btn.prop("disabled",false).text("Create Draft"); }); }); }); </script>';
+        ?>
+        <script>
+        jQuery(function($){
+            // Individual draft create
+            $(document).on('click','.aipex-sc-create-draft',function(){
+                var $btn=$(this),idx=$btn.data('index'),nonce=$btn.data('nonce');
+                var series_id=$('.aipex-sc-series-sel[data-index="'+idx+'"]').val()||0;
+                var presenter_id=$('.aipex-sc-presenter-sel[data-index="'+idx+'"]').val()||0;
+                $btn.prop('disabled',true).text('Creating…');
+                $.post(ajaxurl,{action:'aipex_sc_create_draft',nonce:nonce,index:idx,series_id:series_id,presenter_id:presenter_id},function(resp){
+                    if(resp&&resp.success){ $('#aipex-sc-new-'+idx).html('<td colspan="4" style="color:green">✓ <a href="'+resp.data.edit_url+'" target="_blank">'+resp.data.title+'</a></td>'); }
+                    else { $btn.prop('disabled',false).text('Create Draft'); alert('Error: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Unknown')); }
+                }).fail(function(){ $btn.prop('disabled',false).text('Create Draft'); });
+            });
+            // Apply All
+            var allRunning=false,allOffset=0;
+            function allLog(m){ var $l=$('#aipex-sc-all-log'); $l.show().text($l.text()?$l.text()+'\n'+m:m); $l.scrollTop($l[0].scrollHeight); }
+            function allStep(nonce){
+                if(!allRunning) return;
+                $.post(ajaxurl,{action:'aipex_sc_create_all_drafts',nonce:nonce,offset:allOffset},function(resp){
+                    if(!resp||!resp.success){ allRunning=false; $('#aipex-sc-create-all').prop('disabled',false); allLog('ERROR: '+(resp&&resp.data&&resp.data.message?resp.data.message:'Failed')); return; }
+                    var d=resp.data;
+                    $('#aipex-sc-all-bar').css('width',(d.pct||0)+'%');
+                    $.each(d.log||[],function(_,l){ allLog(l); });
+                    $('#aipex-sc-all-status').text(d.done+' created — '+d.remaining+' remaining');
+                    allOffset=d.offset;
+                    if(d.finished){ allRunning=false; $('#aipex-sc-create-all').prop('disabled',false); $('#aipex-sc-all-bar').css('width','100%'); $('#aipex-sc-all-status').text('Complete — '+d.total+' drafts created. Refresh to update.'); }
+                    else setTimeout(function(){ allStep(nonce); },300);
+                }).fail(function(xhr){ allRunning=false; allLog('HTTP '+xhr.status); });
+            }
+            $('#aipex-sc-create-all').on('click',function(){
+                if(!confirm('Create all '+$(this).data('total')+' drafts? This cannot be undone.')) return;
+                allRunning=true; allOffset=0; $(this).prop('disabled',true);
+                $('#aipex-sc-all-log').text('').show(); $('#aipex-sc-all-bar').css('width','0%');
+                allStep($(this).data('nonce'));
+            });
+        });
+        </script>
+        <?php
     }
 
     public static function apply_review($posted){

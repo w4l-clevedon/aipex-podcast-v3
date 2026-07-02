@@ -243,6 +243,12 @@ class Aipex_Podcast_CSV_Importer {
             $series_id    = $series_match    ? $series_match['id']    : 0;
             $presenter_id = $presenter_match ? $presenter_match['id'] : 0;
 
+            // Auto-find primary presenter from existing show episodes if not in CSV
+            if (!$presenter_id && $series_id) {
+                $presenter_id = (int)Aipex_Podcast_Soundcloud::get_series_primary_presenter($series_id);
+                if ($presenter_id) $presenter_match = ['id'=>$presenter_id,'title'=>get_the_title($presenter_id),'score'=>100];
+            }
+
             // Get episode candidates (narrowed by series if found)
             $ep_ids = $series_id ? Aipex_Podcast_Relationships::episodes_for(Aipex_Podcast_Relationships::TYPE_SHOW, $series_id) : null;
             $ep     = self::find_episode($title, $ep_ids);
