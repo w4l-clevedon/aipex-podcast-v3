@@ -637,26 +637,46 @@ class Aipex_Podcast_Soundcloud {
         wp_send_json_success(['post_id'=>$post_id,'edit_url'=>get_edit_post_link($post_id,'raw'),'title'=>$item['track_title']]);
     }
 
-    /** Export the full SC track index to a CSV download. */
+    /**
+     * Export episodes that have a SoundCloud URL but no Dropbox URL and
+     * no transcript — exactly the ones needing downloading to Dropbox.
+     * Columns: Episode Title, Show, Presenter, SoundCloud URL
+     */
     public static function ajax_export_index(){
         if (!current_user_can('manage_options')) wp_die('Permission denied.');
         check_ajax_referer('aipex_sc_export','nonce');
 
-        $index = get_option(self::INDEX_OPTION, []);
-        if (!$index) wp_die('No track index found. Run the SoundCloud importer first to fetch the track list.');
+        // Episodes with SC URL but no Dropbox URL and no transcript
+        $posts = get_posts([
+            'post_type'      => 'aipex_podcast',
+            'post_status'    => 'any',
+            'posts_per_page' => -1,
+            'orderby'        => 'title',
+            'order'          => 'ASC',
+            'meta_query'     => [
+                'relation' => 'AND',
+                ['key'=>'soundcloud_url','compare'=>'EXISTS'],
+                ['key'=>'soundcloud_url','value'=>'','compare'=>'!='],
+                ['key'=>'dropbox_url','compare'=>'NOT EXISTS'],
+                ['key'=>'transcript','compare'=>'NOT EXISTS'],
+            ],
+        ]);
+
+        if (!$posts) wp_die('No episodes found with SoundCloud URL and no Dropbox file. All episodes may already have a Dropbox link or transcript.');
 
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="soundcloud-tracks-'.date('Y-m-d').'.csv"');
+        header('Content-Disposition: attachment; filename="sc-needs-download-'.date('Y-m-d').'.csv"');
         header('Pragma: no-cache');
 
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Track Title', 'SoundCloud URL', 'Created']);
-        foreach ($index as $track) {
-            fputcsv($out, [
-                $track['title']   ?? '',
-                $track['url']     ?? '',
-                $track['created'] ?? '',
-            ]);
+        fputcsv($out, ['Episode Title', 'Show', 'Presenter', 'SoundCloud URL', 'Published']);
+        foreach ($posts as $post) {
+            $sc_url  = get_post_meta($post->ID, 'soundcloud_url', true);
+            $show_ids = Aipex_Podcast_Relationships::shows_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $post->ID);
+            $host_ids = Aipex_Podcast_Relationships::hosts_for(Aipex_Podcast_Relationships::TYPE_EPISODE, $post->ID);
+            $show     = $show_ids ? get_the_title($show_ids[0]) : '';
+            $host     = $host_ids ? get_the_title($host_ids[0]) : '';
+            fputcsv($out, [$post->post_title, $show, $host, $sc_url, get_the_date('Y-m-d', $post)]);
         }
         fclose($out);
         exit;
