@@ -264,25 +264,22 @@ class Aipex_Podcast_Soundcloud {
             if (function_exists('curl_init')) {
                 $ch = curl_init($resolve_url);
                 curl_setopt_array($ch,[
-                    CURLOPT_RETURNTRANSFER  => true,
-                    CURLOPT_TIMEOUT         => 10,
-                    CURLOPT_HTTPHEADER      => ['Authorization: '.$prefix.' '.self::access_token(),'User-Agent: Aipex/1.0'],
-                    CURLOPT_FOLLOWLOCATION  => true,
-                    CURLOPT_UNRESTRICTED_AUTH => true,  // keep Authorization header on redirect
-                    CURLOPT_SSL_VERIFYPEER  => true,
-                    CURLOPT_HEADER          => true,    // include response headers so we can see redirects
+                    CURLOPT_RETURNTRANSFER    => true,
+                    CURLOPT_TIMEOUT           => 10,
+                    CURLOPT_HTTPHEADER        => ['Authorization: '.$prefix.' '.self::access_token(),'User-Agent: Aipex/1.0'],
+                    CURLOPT_FOLLOWLOCATION    => true,
+                    CURLOPT_UNRESTRICTED_AUTH => true,
+                    CURLOPT_SSL_VERIFYPEER    => true,
+                    // No CURLOPT_HEADER — with redirects it contaminates the body
                 ]);
-                $raw = (string)curl_exec($ch);
+                $body = (string)curl_exec($ch);
                 $code = (int)curl_getinfo($ch,CURLINFO_HTTP_CODE);
                 $redirect_count = (int)curl_getinfo($ch,CURLINFO_REDIRECT_COUNT);
                 $effective_url  = curl_getinfo($ch,CURLINFO_EFFECTIVE_URL);
                 $curl_err = curl_error($ch);
                 curl_close($ch);
-                // Split headers from body
-                $header_size = strpos($raw,"\r\n\r\n");
-                $body = $header_size!==false ? substr($raw,$header_size+4) : $raw;
                 $log[] = 'cURL '.$prefix.' → HTTP '.$code.' (redirects: '.$redirect_count.')'
-                    .($effective_url && $effective_url!=='https://api.soundcloud.com/resolve.json' ? ' final URL: '.$effective_url : '')
+                    .($effective_url ? ' final: '.basename(parse_url($effective_url,PHP_URL_PATH)) : '')
                     .($curl_err?' [err: '.$curl_err.']':'');
                 if ($code === 200) { $r = ['code'=>200,'data'=>json_decode($body,true),'body'=>$body]; update_option('aipex_sc_auth_prefix',$prefix,false); break; }
                 $log[] = 'Body: '.substr($body,0,120);
